@@ -11,7 +11,9 @@ function set_tmux_env() {
     local option_name="$1"
     local final_value="$2"
 
-    tmux setenv -g "$option_name" "$final_value"
+    if [[ -z ${!option_name} ]]; then
+      tmux setenv -g "$option_name" "$final_value"
+    fi
 }
 
 function process_format () {
@@ -27,7 +29,7 @@ function array_join() {
 #
 
 # Every pattern have be of form ((A)B) where:
-#  - A is part that will not be highlighted (e.g. escape sequence, whitespace) 
+#  - A is part that will not be highlighted (e.g. escape sequence, whitespace)
 #  - B is part will be highlighted (can contain subgroups)
 #
 # Valid examples:
@@ -53,12 +55,12 @@ FILE_START_CHARS="[[:space:]:<>)(&#'\"]"
 # default patterns group
 PATTERNS_LIST1=(
 "(($CS|^|$FILE_START_CHARS)$FILE_CHARS*/$FILE_CHARS+)" # file paths with /
+"(($CS|^|$FILE_START_CHARS)$FILE_CHARS+\.$FILE_CHARS{1,4})" # anything that looks like file/file path but not too short
 "(()[0-9]+\.[0-9]{3,}|[0-9]{5,})" # long numbers
 "(()[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})" # UUIDs
 "(()[0-9a-f]{7,40})" # hex numbers (e.g. git hashes)
 "(()(https?://|git@|git://|ssh://|ftp://|file:///)[[:alnum:]?=%/_.:,;~@!#$&)(*+-]*)" # URLs
 "(()[[:digit:]]{1,3}\.[[:digit:]]{1,3}\.[[:digit:]]{1,3}\.[[:digit:]]{1,3})" # IP adresses
-"(()0x[0-9a-fA-F]+)" # hex numbers
 )
 
 # alternative patterns group (shown after pressing the SPACE key)
@@ -75,14 +77,12 @@ BLACKLIST=(
 
 # "-n M-f" for Alt-F without prefix
 # "f" for prefix-F
-PICKER_KEY="-n M-f" 
+PICKER_KEY="-n M-'"
+set_tmux_env PICKER_KEY "$PICKER_KEY"
 
 set_tmux_env PICKER_PATTERNS1 $(array_join "|" "${PATTERNS_LIST1[@]}")
 set_tmux_env PICKER_PATTERNS2 $(array_join "|" "${PATTERNS_LIST2[@]}")
 set_tmux_env PICKER_BLACKLIST_PATTERNS $(array_join "|" "${BLACKLIST[@]}")
-
-set_tmux_env PICKER_COPY_COMMAND "xclip -f -in -sel primary | xclip -in -sel clipboard"
-set_tmux_env PICKER_COPY_COMMAND_UPPERCASE "bash -c 'arg=\$(cat -); tmux split-window -h -c \"#{pane_current_path}\" vim \"\$arg\"'"
 
 #set_tmux_env PICKER_HINT_FORMAT $(process_format "#[fg=color0,bg=color202,dim,bold]%s")
 set_tmux_env PICKER_HINT_FORMAT $(process_format "#[fg=black,bg=red,bold]%s")
@@ -95,5 +95,5 @@ set_tmux_env PICKER_HIGHLIGHT_FORMAT $(process_format "#[fg=black,bg=yellow,bold
 # BIND
 #
 
-tmux bind $(echo "$PICKER_KEY") run-shell "$CURRENT_DIR/tmux-picker.sh"
+tmux bind $PICKER_KEY run-shell "$CURRENT_DIR/tmux-picker.sh"
 

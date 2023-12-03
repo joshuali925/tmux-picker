@@ -131,16 +131,9 @@ function run_picker_copy_command() {
     local result="$1"
     local hint="$2"
 
-    is_uppercase=$(echo "$input" | grep -E '^[a-z]+$' &> /dev/null; echo $?)
-
-    if [[ $is_uppercase == "1" ]] && [ ! -z "$PICKER_COPY_COMMAND_UPPERCASE" ]; then
-        command_to_run="$PICKER_COPY_COMMAND_UPPERCASE"
-    elif [ ! -z "$PICKER_COPY_COMMAND" ]; then
-        command_to_run="$PICKER_COPY_COMMAND"
-    fi
-
-    if [[ ! -z "$command_to_run" ]]; then
-        tmux run-shell -b "printf '$result' | $command_to_run"
+    tmux set-buffer -w -- "$result"
+    if [[ $input =~ ^[a-z]+$ ]]; then
+        tmux paste-buffer -t "$current_pane_id"
     fi
 }
 
