@@ -131,9 +131,11 @@ function run_picker_copy_command() {
     local result="$1"
     local hint="$2"
 
-    tmux set-buffer -w -- "$result"
     if [[ $input =~ ^[a-z]+$ ]]; then
+        tmux set-buffer -w -- "$result "
         tmux paste-buffer -t "$current_pane_id"
+    else
+        tmux set-buffer -w -- "$result"
     fi
 }
 
