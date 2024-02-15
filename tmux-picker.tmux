@@ -85,11 +85,13 @@ set_tmux_env PICKER_PATTERNS2 $(array_join "|" "${PATTERNS_LIST2[@]}")
 set_tmux_env PICKER_BLACKLIST_PATTERNS $(array_join "|" "${BLACKLIST[@]}")
 
 #set_tmux_env PICKER_HINT_FORMAT $(process_format "#[fg=color0,bg=color202,dim,bold]%s")
-set_tmux_env PICKER_HINT_FORMAT $(process_format "#[fg=black,bg=red,bold]%s")
+# set_tmux_env PICKER_HINT_FORMAT $(process_format "#[fg=black,bg=red,bold]%s")
+set_tmux_env PICKER_HINT_FORMAT "%s"
 set_tmux_env PICKER_HINT_FORMAT_NOCOLOR "%s"
 
 #set_tmux_env PICKER_HIGHLIGHT_FORMAT $(process_format "#[fg=black,bg=color227,normal]%s")
-set_tmux_env PICKER_HIGHLIGHT_FORMAT $(process_format "#[fg=black,bg=yellow,bold]%s")
+# set_tmux_env PICKER_HIGHLIGHT_FORMAT $(process_format "#[fg=black,bg=yellow,bold]%s")
+set_tmux_env PICKER_HIGHLIGHT_FORMAT "%s"
 
 #
 # BIND
