@@ -84,14 +84,12 @@ set_tmux_env PICKER_PATTERNS1 $(array_join "|" "${PATTERNS_LIST1[@]}")
 set_tmux_env PICKER_PATTERNS2 $(array_join "|" "${PATTERNS_LIST2[@]}")
 set_tmux_env PICKER_BLACKLIST_PATTERNS $(array_join "|" "${BLACKLIST[@]}")
 
-#set_tmux_env PICKER_HINT_FORMAT $(process_format "#[fg=color0,bg=color202,dim,bold]%s")
-# set_tmux_env PICKER_HINT_FORMAT $(process_format "#[fg=black,bg=red,bold]%s")
-set_tmux_env PICKER_HINT_FORMAT "%s"
+# Use direct ANSI escape sequences instead of tput (avoids SI/^O character issues in tmux 3.4+)
+# Format: \x1b[<attrs>m where attrs: 0=reset, 1=bold, 30-37=fg color, 40-47=bg color
+# Colors: 0=black, 1=red, 2=green, 3=yellow, 4=blue, 5=magenta, 6=cyan, 7=white
+set_tmux_env PICKER_HINT_FORMAT $'\x1b[30;41;1m%s\x1b[0m'        # black on red, bold
 set_tmux_env PICKER_HINT_FORMAT_NOCOLOR "%s"
-
-#set_tmux_env PICKER_HIGHLIGHT_FORMAT $(process_format "#[fg=black,bg=color227,normal]%s")
-# set_tmux_env PICKER_HIGHLIGHT_FORMAT $(process_format "#[fg=black,bg=yellow,bold]%s")
-set_tmux_env PICKER_HIGHLIGHT_FORMAT "%s"
+set_tmux_env PICKER_HIGHLIGHT_FORMAT $'\x1b[30;43;1m%s\x1b[0m'   # black on yellow, bold
 
 #
 # BIND
