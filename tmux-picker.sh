@@ -7,19 +7,24 @@ function init_picker_pane() {
     local picker_pane_id=$(echo "$picker_ids" | cut -f1 -d:)
     local picker_window_id=$(echo "$picker_ids" | cut -f2 -d:)
 
-    if [[ ! -z "$last_pane_id" ]]; then # to save precious milliseconds;)
-        local current_size=$(tmux list-panes -F "#{pane_width}:#{pane_height}:#{?pane_active,active,nope}" | grep active)
-        local current_width=$(echo "$current_size" | cut -f1 -d:)
-        local current_height=$(echo "$current_size" | cut -f2 -d:)
+    local current_size=$(tmux list-panes -F "#{pane_width}:#{pane_height}:#{?pane_active,active,nope}" | grep active)
+    local current_width=$(echo "$current_size" | cut -f1 -d:)
+    local current_height=$(echo "$current_size" | cut -f2 -d:)
 
-        local current_window_size=$(tmux list-windows -F "#{window_width}:#{window_height}:#{?window_active,active,nope}" | grep active)
-        local current_window_width=$(echo "$current_window_size" | cut -f1 -d:)
-        local current_window_height=$(echo "$current_window_size" | cut -f2 -d:)
+    local current_window_size=$(tmux list-windows -F "#{window_width}:#{window_height}:#{?window_active,active,nope}" | grep active)
+    local current_window_width=$(echo "$current_window_size" | cut -f1 -d:)
+    local current_window_height=$(echo "$current_window_size" | cut -f2 -d:)
 
-            # this is needed to handle wrapped lines inside split windows:
-            tmux split-window -d -t "$picker_pane_id" -h -l "$((current_window_width - current_width - 1))" '/bin/sh'
-            tmux split-window -d -t "$picker_pane_id" -l "$((current_window_height - current_height - 1))" '/bin/sh'
-        fi
+    # this is needed to handle wrapped lines inside split windows. only add
+    # padding panes when the source pane is meaningfully smaller than its
+    # window (i.e. there are real splits). otherwise the dummy splits would
+    # shrink the source pane on swap and trigger SIGWINCH-induced redraws.
+    if [[ "$((current_window_width - current_width))" -gt 1 ]]; then
+        tmux split-window -d -t "$picker_pane_id" -h -l "$((current_window_width - current_width - 1))" '/bin/sh'
+    fi
+    if [[ "$((current_window_height - current_height))" -gt 1 ]]; then
+        tmux split-window -d -t "$picker_pane_id" -l "$((current_window_height - current_height - 1))" '/bin/sh'
+    fi
 
         echo "$picker_pane_id:$picker_window_id"
     }

@@ -51,11 +51,14 @@ function array_join() {
 CS=$'\x1b'"\[[0-9;]{1,9}m" # color escape sequence
 FILE_CHARS="[[:alnum:]_.#$%&+=/@~-]"
 FILE_START_CHARS="[[:space:]:<>)(&#'\"]"
+# allow color escapes to be embedded inside paths so prompts that color
+# segments individually (e.g. "^[[34m/^[[1mlocal^[[0m...") still match end-to-end
+FILE_CHARS_OR_CS="($CS|$FILE_CHARS)"
 
 # default patterns group
 PATTERNS_LIST1=(
-"(($CS|^|$FILE_START_CHARS)$FILE_CHARS*/$FILE_CHARS+)" # file paths with /
-"(($CS|^|$FILE_START_CHARS)$FILE_CHARS+\.$FILE_CHARS{1,4})" # anything that looks like file/file path but not too short
+"(($CS|^|$FILE_START_CHARS)$FILE_CHARS_OR_CS*/$FILE_CHARS_OR_CS+)" # file paths with /
+"(($CS|^|$FILE_START_CHARS)$FILE_CHARS_OR_CS+\.$FILE_CHARS{1,4})" # anything that looks like file/file path but not too short
 "(()[0-9]+\.[0-9]{3,}|[0-9]{5,})" # long numbers
 "(()[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})" # UUIDs
 "(()[0-9a-f]{7,40})" # hex numbers (e.g. git hashes)
@@ -65,7 +68,7 @@ PATTERNS_LIST1=(
 
 # alternative patterns group (shown after pressing the SPACE key)
 PATTERNS_LIST2=(
-"(($CS|^|$FILE_START_CHARS)$FILE_CHARS*/$FILE_CHARS+)" # file paths with /
+"(($CS|^|$FILE_START_CHARS)$FILE_CHARS_OR_CS*/$FILE_CHARS_OR_CS+)" # file paths with /
 "(($CS|^|$FILE_START_CHARS)$FILE_CHARS{5,})" # anything that looks like file/file path but not too short
 "(()(https?://|git@|git://|ssh://|ftp://|file:///)[[:alnum:]?=%/_.:,;~@!#$&)(*+-]*)" # URLs
 )

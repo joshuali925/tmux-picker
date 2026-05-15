@@ -68,6 +68,11 @@ BEGIN {
                 }
             }
 
+            # strip any color escapes embedded inside the match so the
+            # paste/copy result is clean and highlight rendering stays
+            # visually contiguous across the match
+            gsub(/\x1b\[[0-9;]{1,9}m/, "", line_match);
+
             hint = hint_by_match[line_match]
             if (!hint) {
                 hint = HINTS[++n_matches]
