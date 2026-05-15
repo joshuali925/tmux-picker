@@ -6,14 +6,15 @@ current_pane_id=$1
 picker_pane_id=$2
 last_pane_id=$3
 picker_window_id=$4
-pane_input_temp=$5
+pairs_file=$5
+captures_dir=$6
 
 eval "$(tmux show-env -g -s | grep ^PICKER)"
 
 match_lookup_table=$(mktemp)
+hinted_dir=$(mktemp -d)
 
-# exporting it so they can be properly deleted inside handle_exit trap
-export match_lookup_table
+export match_lookup_table hinted_dir
 
 function lookup_match() {
     local input=$1
@@ -22,32 +23,50 @@ function lookup_match() {
     grep -i "^$input:" $match_lookup_table | sed "s/^$input://" | head -n 1
 }
 
-function get_pane_contents() {
-    cat $pane_input_temp
-}
-
 function extract_hints() {
-    clear
-    export NUM_HINTS_NEEDED=$(get_pane_contents | gawk -f $CURRENT_DIR/counter.awk)
-    get_pane_contents | gawk -f $CURRENT_DIR/hinter.awk 3> $match_lookup_table
+    : > "$match_lookup_table"
+
+    # count total matches across every pane so the right hint set is chosen
+    local total_matches=0
+    while IFS=$'\t' read -r src_pane picker_pane; do
+        local n
+        n=$(gawk -f "$CURRENT_DIR/counter.awk" < "$captures_dir/$src_pane")
+        total_matches=$((total_matches + n))
+    done < "$pairs_file"
+    export NUM_HINTS_NEEDED=$total_matches
+
+    # process each pane with a disjoint slice of the hint pool so every
+    # visible hint key is unique across the whole window
+    local hint_offset=0
+    while IFS=$'\t' read -r src_pane picker_pane; do
+        local n
+        n=$(gawk -f "$CURRENT_DIR/counter.awk" < "$captures_dir/$src_pane")
+        HINT_OFFSET=$hint_offset gawk -f "$CURRENT_DIR/hinter.awk" \
+            3>>"$match_lookup_table" \
+            < "$captures_dir/$src_pane" \
+            > "$hinted_dir/$src_pane"
+        hint_offset=$((hint_offset + n))
+    done < "$pairs_file"
 }
 
-function show_hints_again() {
-    local picker_pane_id=$1
-
-    tmux swap-pane -s "$current_pane_id" -t "$picker_pane_id" # hide screen clearing glitch
-    extract_hints
-    tmux swap-pane -s "$current_pane_id" -t "$picker_pane_id"
+function render_hinted_panes() {
+    while IFS=$'\t' read -r src_pane picker_pane; do
+        # pipe the hinted output into the picker pane's tty. clear first so
+        # leftover shell prompt content from /bin/sh doesn't shine through.
+        local picker_tty
+        picker_tty=$(tmux display -pt "$picker_pane" '#{pane_tty}')
+        if [[ -n "$picker_tty" && -w "$picker_tty" ]]; then
+            printf '\x1b[2J\x1b[H' > "$picker_tty"
+            cat "$hinted_dir/$src_pane" > "$picker_tty"
+        fi
+    done < "$pairs_file"
 }
 
-function show_hints_and_swap() {
-    current_pane_id=$1
-    picker_pane_id=$2
-
-    extract_hints
-    tmux swap-pane -s "$current_pane_id" -t "$picker_pane_id"
+function swap_all_panes() {
+    while IFS=$'\t' read -r src_pane picker_pane; do
+        tmux swap-pane -s "$src_pane" -t "$picker_pane"
+    done < "$pairs_file"
 }
-
 
 BACKSPACE=$'\177'
 
@@ -68,8 +87,8 @@ function zoom_pane() {
     tmux resize-pane -Z -t "$pane_id"
 }
 
-function revert_to_original_pane() {
-    tmux swap-pane -s "$current_pane_id" -t "$picker_pane_id"
+function revert_to_original_panes() {
+    swap_all_panes
 
     if [[ ! -z "$last_pane_id" ]]; then
         tmux select-pane -t "$last_pane_id"
@@ -80,13 +99,13 @@ function revert_to_original_pane() {
 }
 
 function handle_exit() {
-    rm -rf "$pane_input_temp" "$match_lookup_table"
-    revert_to_original_pane
+    revert_to_original_panes
 
     if [[ ! -z "$result" ]]; then
         run_picker_copy_command "$result" "$input"
     fi
 
+    rm -rf "$pairs_file" "$captures_dir" "$hinted_dir" "$match_lookup_table"
     tmux kill-window -t "$picker_window_id"
 }
 
@@ -121,7 +140,10 @@ export PICKER_PATTERNS=$PICKER_PATTERNS1
 export PICKER_BLACKLIST_PATTERNS=$PICKER_BLACKLIST_PATTERNS
 
 pane_was_zoomed=$(is_pane_zoomed "$current_pane_id")
-show_hints_and_swap $current_pane_id $picker_pane_id
+
+extract_hints
+render_hinted_panes
+swap_all_panes
 [[ $pane_was_zoomed == "1" ]] && zoom_pane "$picker_pane_id"
 
 hide_cursor
@@ -168,14 +190,6 @@ while read -rsn1 char; do
         continue
     elif [[ $char == "<ESC>" ]]; then
             exit
-    elif [[ $char == "" ]]; then
-        if [ "$PICKER_PATTERNS" = "$PICKER_PATTERNS1" ]; then
-                export PICKER_PATTERNS=$PICKER_PATTERNS2;
-        else
-                export PICKER_PATTERNS=$PICKER_PATTERNS1;
-        fi
-        show_hints_again "$picker_pane_id"
-        continue
     else
         input="$input$char"
     fi

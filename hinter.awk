@@ -1,7 +1,10 @@
 @include "join" # gawk 4.1 was released in 2013
 
 BEGIN {
-    n_matches = 0;
+    # HINT_OFFSET lets multiple invocations (e.g. one per pane) draw from
+    # disjoint slices of the shared hint pool while keeping num_hints_needed
+    # consistent across all of them.
+    n_matches = ENVIRON["HINT_OFFSET"] + 0;
 
     highlight_patterns = ENVIRON["PICKER_PATTERNS"]
     num_hints_needed = ENVIRON["NUM_HINTS_NEEDED"]
