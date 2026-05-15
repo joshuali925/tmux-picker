@@ -24,6 +24,54 @@ BEGIN {
     n_unique = 0
     n_files = 0
     n_lines = 0
+
+    # Pre-compute the outer-group index for each top-level alternation arm
+    # so the per-match prefix lookup walks a small fixed list instead of
+    # scanning every key in matches[].
+    compute_outer_indices(highlight_patterns)
+}
+
+function compute_outer_indices(pat,    n, i, c, c2, j, depth, group_idx, in_class) {
+    n = length(pat)
+    depth = 0
+    group_idx = 0
+    in_class = 0
+    n_outer = 0
+    for (i = 1; i <= n; i++) {
+        c = substr(pat, i, 1)
+        if (c == "\\") { i++; continue }
+        if (in_class) {
+            # POSIX subclasses [:foo:] / [=foo=] / [.foo.] — skip past the closing
+            # so the inner ] doesn't end the outer class prematurely.
+            if (c == "[") {
+                c2 = substr(pat, i+1, 1)
+                if (c2 == ":" || c2 == "=" || c2 == ".") {
+                    j = index(substr(pat, i+2), c2 "]")
+                    if (j > 0) { i = i + 2 + j; continue }
+                }
+            }
+            if (c == "]") in_class = 0
+            continue
+        }
+        if (c == "[") {
+            in_class = 1
+            # First char inside a class is a literal ] (after optional ^).
+            c2 = substr(pat, i+1, 1)
+            if (c2 == "^") { i++; c2 = substr(pat, i+1, 1) }
+            if (c2 == "]") i++
+            continue
+        }
+        if (c == "(") {
+            depth++
+            group_idx++
+            if (depth == 1) {
+                n_outer++
+                outer_indices[n_outer] = group_idx
+            }
+        } else if (c == ")") {
+            depth--
+        }
+    }
 }
 
 FNR == 1 {
@@ -47,13 +95,12 @@ FNR == 1 {
 
         if (line_match !~ blacklist) {
             # Top-level alternation is ((prefix)body); only the matched arm
-            # populates capture entries, so find the smallest numeric key —
-            # that's the outer group, +1 is its prefix.
+            # populates capture entries. Walk the precomputed outer indices
+            # and pick the first one that participated in this match.
             outer_idx = 0
-            for (k in matches) {
-                if (k+0 == k && k > 0 && (outer_idx == 0 || k+0 < outer_idx)) {
-                    outer_idx = k+0
-                }
+            for (k = 1; k <= n_outer; k++) {
+                oi = outer_indices[k]
+                if (matches[oi, "start"] > 0) { outer_idx = oi; break }
             }
             if (outer_idx > 0) {
                 prefix_idx = outer_idx + 1
@@ -74,10 +121,13 @@ FNR == 1 {
             }
 
             # Fix colors broken by the hints highlighting.
-            # This is mostly needed to keep prompts intact, so fix first ~500 chars only
-            if (length(output_line) < 500) {
+            # This is mostly needed to keep prompts intact, so fix first ~500 chars only.
+            # Skip entirely when pre_match has no escapes — the common case.
+            if (length(output_line) < 500 && index(pre_match, "\x1b") > 0) {
                 num_colors = split(pre_match, arr, /\x1b\[[0-9;]{1,9}m/, colors);
-                post_match = join(colors, 1, 1 + num_colors, SUBSEP) post_match;
+                if (num_colors > 1) {
+                    post_match = join(colors, 1, num_colors - 1, "") post_match;
+                }
             }
 
             # Defer rendering: store match index inline; resolved at END once
@@ -147,16 +197,14 @@ END {
         end = (fi < n_files) ? file_first_line[fi+1] - 1 : n_lines
         for (li = start; li <= end; li++) {
             buf = line_buffer[li]
-            result = ""
             while ((p = index(buf, "\x01")) > 0) {
-                result = result substr(buf, 1, p - 1)
+                printf "%s", substr(buf, 1, p - 1) > out
                 rest = substr(buf, p + 1)
                 q = index(rest, "\x02")
-                idx_str = substr(rest, 1, q - 1)
-                result = result rendered_by_idx[idx_str + 0]
+                printf "%s", rendered_by_idx[substr(rest, 1, q - 1) + 0] > out
                 buf = substr(rest, q + 1)
             }
-            printf "%s", (result buf) > out
+            printf "%s", buf > out
         }
         close(out)
     }
