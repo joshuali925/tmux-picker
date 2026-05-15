@@ -2,12 +2,13 @@
 
 CURRENT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-current_pane_id=$1
-picker_pane_id=$2
-last_pane_id=$3
-picker_window_id=$4
-pairs_file=$5
-captures_dir=$6
+last_pane_id=$1
+pairs_file=$2
+captures_dir=$3
+
+picker_pane_id=$(tmux display -p '#{pane_id}')
+picker_window_id=$(tmux display -p '#{window_id}')
+current_pane_id=$(awk -F$'\t' -v p="$picker_pane_id" '$2==p{print $1; exit}' "$pairs_file")
 
 eval "$(tmux show-env -g -s | grep ^PICKER)"
 
@@ -26,36 +27,37 @@ function lookup_match() {
 function extract_hints() {
     : > "$match_lookup_table"
 
-    # count total matches across every pane so the right hint set is chosen
+    # NUM_HINTS_NEEDED picks the right hint pool size in hinter.awk, so it
+    # must be set before any pane is hinted. Count first, cache, then hint
+    # each pane with a disjoint hint_offset so keys are unique window-wide.
     local total_matches=0
+    local -a counts
+    local i=0
     while IFS=$'\t' read -r src_pane picker_pane; do
-        local n
-        n=$(gawk -f "$CURRENT_DIR/counter.awk" < "$captures_dir/$src_pane")
-        total_matches=$((total_matches + n))
+        counts[i]=$(gawk -f "$CURRENT_DIR/counter.awk" < "$captures_dir/$src_pane")
+        total_matches=$((total_matches + counts[i]))
+        i=$((i + 1))
     done < "$pairs_file"
     export NUM_HINTS_NEEDED=$total_matches
 
-    # process each pane with a disjoint slice of the hint pool so every
-    # visible hint key is unique across the whole window
     local hint_offset=0
+    i=0
     while IFS=$'\t' read -r src_pane picker_pane; do
-        local n
-        n=$(gawk -f "$CURRENT_DIR/counter.awk" < "$captures_dir/$src_pane")
         HINT_OFFSET=$hint_offset gawk -f "$CURRENT_DIR/hinter.awk" \
             3>>"$match_lookup_table" \
             < "$captures_dir/$src_pane" \
             > "$hinted_dir/$src_pane"
-        hint_offset=$((hint_offset + n))
+        hint_offset=$((hint_offset + counts[i]))
+        i=$((i + 1))
     done < "$pairs_file"
 }
 
 function render_hinted_panes() {
     while IFS=$'\t' read -r src_pane picker_pane; do
-        # pipe the hinted output into the picker pane's tty. clear first so
-        # leftover shell prompt content from /bin/sh doesn't shine through.
         local picker_tty
         picker_tty=$(tmux display -pt "$picker_pane" '#{pane_tty}')
         if [[ -n "$picker_tty" && -w "$picker_tty" ]]; then
+            # clear first so the /bin/sh prompt doesn't shine through
             printf '\x1b[2J\x1b[H' > "$picker_tty"
             cat "$hinted_dir/$src_pane" > "$picker_tty"
         fi
@@ -63,10 +65,9 @@ function render_hinted_panes() {
 }
 
 function swap_all_panes() {
+    # -d keeps the active pane unchanged across swaps; without it the loop
+    # leaves whichever pair ran last as active, clobbering the user's slot.
     while IFS=$'\t' read -r src_pane picker_pane; do
-        # -d so swap-pane doesn't shift which pane is active. without it,
-        # each swap re-marks its target as active and the loop finishes with
-        # whichever pair ran last as active — clobbering the user's selection.
         tmux swap-pane -d -s "$src_pane" -t "$picker_pane"
     done < "$pairs_file"
 }
