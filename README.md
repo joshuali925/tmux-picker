@@ -8,22 +8,20 @@ This is a slimmed-down, improved and extended fork of [tmux-fingers](https://git
 
 # Usage
 
-Press ( <kbd>Meta</kbd> + <kbd>F</kbd> ) to enter **[picker]** hint mode, in which relevant stuff (e.g. file paths, git SHAs) in the current
-pane will be highlighted along with letter hints. By pressing those letters, the highlighted match will be copied to the system clipboard.
+Press ( <kbd>Meta</kbd> + <kbd>F</kbd> ) to enter **[picker]** hint mode. Relevant stuff (file paths, URLs,
+git SHAs, IPs, UUIDs, …) across **every pane in the current window** is highlighted with letter hints.
 
-By default, following items are highlighted:
+* Type a hint in **lowercase** to paste the match into the originating pane (a trailing space is appended).
+* Type a hint in **UPPERCASE** to copy the match to the tmux/system clipboard without pasting.
+* <kbd>Backspace</kbd> clears the in-progress hint, <kbd>Esc</kbd> exits hint mode.
 
-* File paths (that contain `/`)
-* git SHAs
-* numbers (4+ digits)
-* hex numbers
-* IP addresses
-* UUIDs
+By default the following are highlighted:
 
-You can press:
-
-* <kbd>SPACE</kbd> to highlight additional items (everything that might be a file path, if it's longer than 4 characters).
-* <kbd>ESC</kbd> to exit **[picker]** hint mode
+* File paths and dotted paths (e.g. `foo/bar`, `pkg.module.func`, `file.ext`)
+* URLs (`http(s)://`, `git@`, `git://`, `ssh://`, `ftp://`, `file://`) and Markdown link targets
+* Diff paths (`--- a/...`, `+++ b/...`)
+* Git SHAs (7–40 hex), `sha256:…` digests, IPFS CIDs (`Qm…`)
+* UUIDs, IPv4 / IPv6 addresses, hex colors (`#rrggbb`), `0x…` literals, integers (4+ digits)
 
 # Installation
 
@@ -33,18 +31,77 @@ You can press:
 
 # Configuration
 
-- Edit `~/.tmux/tmux-picker/tmux-picker.tmux`, where you can change:
-    - `PICKER_KEY` (default <kbd>Meta</kbd> + <kbd>F</kbd>, without the prefix)
-    - `PATTERNS_LIST1` - regex patterns highlighted after pressing `PICKER_KEY`
-    - `PATTERNS_LIST2` - regex patterns highlighted after pressing <kbd>SPACE</kbd> in hint mode 
-    - `BLACKLIST` - regex pattern describing items that will not be highlighted
-    - `PICKER_COPY_COMMAND` - command to execute on highlighted item
-        - default is: `xclip -f -in -sel primary | xclip -in -sel clipboard`, which copies item to clipboard
-    - `PICKER_COPY_COMMAND_UPPERCASE` - command to execute on highlighted item, when hint was typed using uppercase letters
-        - default is `bash -c 'arg=\$(cat -); tmux split-window -h -c \"#{pane_current_path}\" vim \"\$arg\"'`, which executes `vim` in a sidebar
-    - `PICKER_HINT_FORMAT` - describes hint color/style.
-        - Default is `#[fg=black,bg=red,bold]`, but `#[fg=color0,bg=color202,dim,bold]%s` is IMO better if your terminal supports 256 colors
-    - `PICKER_HIGHLIGHT_FORMAT` - describes highlighted item color/style
+All configuration lives in `tmux-picker.tmux`. Edit that file (or set the same env vars before
+sourcing it) and reload tmux. The variables of interest:
+
+### Key binding
+
+```bash
+# default: Alt-F, no tmux prefix needed
+PICKER_KEY="-n M-f"
+# prefix-F instead:
+# PICKER_KEY="f"
+```
+
+The string is passed verbatim to `tmux bind`, so any flags `tmux bind` accepts work here.
+
+### Patterns
+
+`PATTERNS_LIST1` is a bash array of extended regexes (gawk flavor) joined with `|` into
+`PICKER_PATTERNS`. **Each pattern must be wrapped as `((prefix)body)`** — the matcher strips the
+leading `prefix` capture from the hinted text so the visible hint covers only the body. The helper
+variables defined at the top of `tmux-picker.tmux` make this convenient:
+
+| Variable | Meaning |
+|---|---|
+| `CS` | one ANSI color escape (`\e[…m`) — patterns must allow these inside bodies because `capture-pane -e` keeps colors in the stream |
+| `START_DELIM` | the punctuation set treated as a word boundary: ``[[:space:]:<>)(&#'"]`` |
+| `SP` | "start position" — `($CS\|^\|$START_DELIM)`, the standard `prefix` capture |
+| `FCS` | "filename char or color escape" — `[[:alnum:]_.%/~-]` ∪ `$CS` |
+
+Add a pattern by appending another `"((prefix)body)"` entry to the array. For example, to also
+highlight Jira-style ticket IDs:
+
+```bash
+PATTERNS_LIST1+=(
+    "(${SP}[A-Z]+-[0-9]+)"
+)
+```
+
+`BLACKLIST` is an array of regexes for matches you want to suppress (anchored with the same
+`START_DELIM` boundary as the matcher). It is empty by default.
+
+There is no longer a separate "press SPACE for more patterns" mode — everything lives in a single
+list.
+
+### Colors
+
+Hint and highlight styles are raw ANSI escape sequences with a single `%s` placeholder. Raw
+escapes are used (rather than tmux `#[…]` format strings) because tput emits SI/^O bytes that
+tmux 3.4+ mangles. Defaults match the wezterm quick-select palette:
+
+```bash
+# black on orange, bold — the hint key letters
+PICKER_HINT_FORMAT=$'\x1b[38;2;0;0;0;48;2;255;140;0;1m%s\x1b[0m'
+
+# white on blue, bold — the rest of the matched item
+PICKER_HIGHLIGHT_FORMAT=$'\x1b[38;2;255;255;255;48;2;0;102;204;1m%s\x1b[0m'
+
+# fallback used when computing the rendered length of a hint
+PICKER_HINT_FORMAT_NOCOLOR="%s"
+```
+
+The `38;2;R;G;B` / `48;2;R;G;B` form is 24-bit truecolor; swap in the 256-color form
+(`38;5;N` / `48;5;N`) or the 8-color form (`30`–`37` / `40`–`47`) if your terminal needs it.
+
+### Copy / paste behavior
+
+The picker always writes the match to the tmux paste buffer with `tmux set-buffer -w` (the `-w`
+flag forwards it to the system clipboard via OSC 52 when your terminal supports it). When the
+hint is typed in **lowercase** the buffer is then pasted into the originating pane with a
+trailing space appended. Typing the hint in **UPPERCASE** skips the paste step. This is wired
+directly in `hint_mode.sh::run_picker_copy_command` — adjust it there if you want a different
+action (e.g. open in `$EDITOR`).
 
 # Requirements
 
@@ -91,10 +148,14 @@ Like tmux-fingers, tmux-picker still supports:
 
 The basic idea is:
 
-- create auxiliary pane with the same width and height as the current pane
-- `tmux capture-pane -t $current_pane | gawk -f find-and-highlight-patterns.awk` to auxiliary pane
-- swap panes (the easiest way not to break things like copy-mode) 
-- read typed keys and execute user command on selected item
+- create an auxiliary `[picker]` window with one pane per pane in the source window, laid out
+  identically (`tmux select-layout` on the captured `window_layout`)
+- for each source pane, `tmux capture-pane -e -J -p | gawk -f hinter.awk` into its picker twin,
+  drawing hints from a shared, window-wide pool so each key is unique
+- swap each source pane with its picker twin (the easiest way not to break things like copy-mode);
+  the realignment step keeps the originally-active pane active so keystrokes reach the read loop
+- read typed keys, look up the match by hint, and either paste it back or just stash it in the
+  paste buffer
 
 # License
 
