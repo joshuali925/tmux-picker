@@ -32,7 +32,6 @@ done < <(tmux list-panes -t "$picker_pane_id" -F "#{pane_id}	#{pane_tty}")
 eval "$(tmux show-env -g -s | grep ^PICKER)"
 
 match_lookup_table=$(mktemp)
-hinted_dir=$(mktemp -d)
 
 declare -A match_by_hint
 
@@ -40,45 +39,38 @@ function extract_hints() {
     : > "$match_lookup_table"
 
     # Single gawk pass over every captured pane: one process startup, one
-    # regex compile, and the hint pool is chosen at END from the global
-    # unique-match count.
+    # regex compile. TTY_PATHS lets awk paint hints straight to each picker
+    # pane in END, skipping a temp file + cat round-trip per pane.
     local -a capture_paths
-    local src
-    for src in "${src_panes[@]}"; do
-        capture_paths+=("$captures_dir/$src")
+    local i tty_paths=""
+    for (( i=0; i<${#src_panes[@]}; i++ )); do
+        capture_paths+=("$captures_dir/${src_panes[i]}")
+        tty_paths+="${src_panes[i]}"$'\t'"${picker_tty_by_src[${picker_panes[i]}]}"$'\n'
     done
 
-    HINTED_DIR=$hinted_dir gawk -f "$CURRENT_DIR/hinter.awk" \
+    TTY_PATHS=$tty_paths gawk -f "$CURRENT_DIR/hinter.awk" \
         3>>"$match_lookup_table" \
-        "${capture_paths[@]}" >/dev/null
+        "${capture_paths[@]}"
 
     # Cache hint→match in memory so per-keystroke lookup is fork-free.
     local hint match
     while IFS=: read -r hint match; do
+        [[ -z $hint ]] && continue
         match_by_hint[$hint]=$match
     done < "$match_lookup_table"
 }
 
-function render_hinted_panes() {
-    local i
-    for (( i=0; i<${#src_panes[@]}; i++ )); do
-        local src=${src_panes[i]} picker=${picker_panes[i]}
-        local picker_tty=${picker_tty_by_src[$picker]}
-        if [[ -n $picker_tty && -w $picker_tty ]]; then
-            # clear first so the picker pane's prior content doesn't shine through
-            printf '\x1b[2J\x1b[H' > "$picker_tty"
-            cat "$hinted_dir/$src" > "$picker_tty"
-        fi
-    done
-}
-
-function swap_all_panes() {
+function swap_all_panes_and_zoom() {
     # -d keeps the active pane unchanged across swaps; without it the loop
     # leaves whichever pair ran last as active, clobbering the user's slot.
-    local i
+    # Batched as one tmux command (swap × N + optional zoom) so the whole
+    # transition costs one IPC round-trip.
+    local i cmd=""
     for (( i=0; i<${#src_panes[@]}; i++ )); do
-        tmux swap-pane -d -s "${src_panes[i]}" -t "${picker_panes[i]}"
+        cmd+="${cmd:+ \\; }swap-pane -d -s ${src_panes[i]} -t ${picker_panes[i]}"
     done
+    [[ $pane_was_zoomed == "1" ]] && cmd+=" \\; resize-pane -Z -t $picker_pane_id"
+    eval "tmux $cmd"
 }
 
 BACKSPACE=$'\177'
@@ -86,21 +78,20 @@ BACKSPACE=$'\177'
 input=''
 result=''
 
-function zoom_pane() {
-    local pane_id=$1
-
-    tmux resize-pane -Z -t "$pane_id"
-}
-
 function revert_to_original_panes() {
-    swap_all_panes
-
-    if [[ ! -z "$last_pane_id" ]]; then
-        tmux select-pane -t "$last_pane_id"
-        tmux select-pane -t "$current_pane_id"
+    # Build one tmux command that swaps every pane back, restores the
+    # last-pane / current-pane focus order, and (if needed) re-zooms the
+    # current pane. Replaces N swap-pane forks plus 2 select-panes plus a
+    # resize-pane with a single IPC round-trip.
+    local i cmd=""
+    for (( i=0; i<${#src_panes[@]}; i++ )); do
+        cmd+="${cmd:+ \\; }swap-pane -d -s ${src_panes[i]} -t ${picker_panes[i]}"
+    done
+    if [[ -n "$last_pane_id" ]]; then
+        cmd+=" \\; select-pane -t $last_pane_id \\; select-pane -t $current_pane_id"
     fi
-
-    [[ $pane_was_zoomed == "1" ]] && zoom_pane "$current_pane_id"
+    [[ $pane_was_zoomed == "1" ]] && cmd+=" \\; resize-pane -Z -t $current_pane_id"
+    eval "tmux $cmd"
 }
 
 function handle_exit() {
@@ -110,7 +101,7 @@ function handle_exit() {
         run_picker_copy_command "$result" "$input"
     fi
 
-    rm -rf "$pairs_file" "$captures_dir" "$hinted_dir" "$match_lookup_table"
+    rm -rf "$pairs_file" "$captures_dir" "$match_lookup_table"
     tmux kill-window -t "$picker_window_id"
 }
 
@@ -130,9 +121,7 @@ trap "handle_exit" EXIT
 export PICKER_PATTERNS=$PICKER_PATTERNS1
 
 extract_hints
-render_hinted_panes
-swap_all_panes
-[[ $pane_was_zoomed == "1" ]] && zoom_pane "$picker_pane_id"
+swap_all_panes_and_zoom
 
 hide_cursor
 input=''

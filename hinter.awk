@@ -11,6 +11,16 @@ BEGIN {
     compound_format = hint_format highlight_format
     hinted_dir = ENVIRON["HINTED_DIR"]
 
+    # Map of source-capture basename → output path. When set, each pane's
+    # rendered hints are written straight to the picker pane's tty in END,
+    # skipping the temp-file + cat round-trip.
+    n_tty = split(ENVIRON["TTY_PATHS"], _tty_lines, "\n")
+    for (_j = 1; _j <= n_tty; _j++) {
+        if (_tty_lines[_j] == "") continue
+        split(_tty_lines[_j], _p, "\t")
+        tty_for[_p[1]] = _p[2]
+    }
+
     n_unique = 0
     n_files = 0
     n_lines = 0
@@ -124,7 +134,15 @@ END {
     }
 
     for (fi = 1; fi <= n_files; fi++) {
-        out = hinted_dir "/" basename(file_path[fi])
+        bn = basename(file_path[fi])
+        tty = tty_for[bn]
+        if (tty != "") {
+            out = tty
+            # Clear the picker pane's prior contents before painting hints.
+            printf "\x1b[2J\x1b[H" > out
+        } else {
+            out = hinted_dir "/" bn
+        }
         start = file_first_line[fi]
         end = (fi < n_files) ? file_first_line[fi+1] - 1 : n_lines
         for (li = start; li <= end; li++) {
