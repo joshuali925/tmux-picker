@@ -68,9 +68,9 @@ set_tmux_env PICKER_PATTERNS1 "$(array_join "|" "${PATTERNS_LIST1[@]}")"
 set_tmux_env PICKER_BLACKLIST_PATTERNS "$(array_join "|" "${BLACKLIST[@]}")"
 
 # Direct ANSI escapes — tput emits SI/^O bytes that tmux 3.4+ mangles.
-set_tmux_env PICKER_HINT_FORMAT $'\x1b[30;41;1m%s\x1b[0m'
+set_tmux_env PICKER_HINT_FORMAT $'\x1b[38;2;0;0;0;48;2;255;140;0;1m%s\x1b[0m'
 set_tmux_env PICKER_HINT_FORMAT_NOCOLOR "%s"
-set_tmux_env PICKER_HIGHLIGHT_FORMAT $'\x1b[30;43;1m%s\x1b[0m'
+set_tmux_env PICKER_HIGHLIGHT_FORMAT $'\x1b[38;2;255;255;255;48;2;0;102;204;1m%s\x1b[0m'
 
 #
 # BIND
