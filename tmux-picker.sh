@@ -80,6 +80,27 @@ function prompt_picker_for_window() {
     picker_panes_raw=$(tmux list-panes -t "$picker_window_id" -F "#{pane_id} #{pane_top} #{pane_left}" \
         | sort -k2,2n -k3,3n)
 
+    # rearrange picker panes so picker_pane_id (the one that will run
+    # hint_mode.sh) ends up paired with current_pane_id. after the final
+    # swap-pane that puts picker_pane_id into current_pane_id's old slot —
+    # which is the active slot in the source window, so keystrokes reach
+    # hint_mode.sh's read loop. it also keeps the zoomed-pane case correct,
+    # since the hints rendered to picker_pane_id will be for current_pane_id.
+    local current_idx
+    current_idx=$(printf '%s\n' "$source_panes_raw" | awk '{print $1}' \
+        | grep -nx "$current_pane_id" | cut -d: -f1)
+    local picker_idx
+    picker_idx=$(printf '%s\n' "$picker_panes_raw" | awk '{print $1}' \
+        | grep -nx "$picker_pane_id" | cut -d: -f1)
+    if [[ -n "$current_idx" && -n "$picker_idx" && "$current_idx" != "$picker_idx" ]]; then
+        local target_picker
+        target_picker=$(printf '%s\n' "$picker_panes_raw" | awk '{print $1}' \
+            | sed -n "${current_idx}p")
+        tmux swap-pane -s "$picker_pane_id" -t "$target_picker"
+        picker_panes_raw=$(tmux list-panes -t "$picker_window_id" -F "#{pane_id} #{pane_top} #{pane_left}" \
+            | sort -k2,2n -k3,3n)
+    fi
+
     # write the source <-> picker pane pairings, one per line, for hint_mode.sh
     local pairs_file=$(mktemp)
     paste <(printf '%s\n' "$source_panes_raw" | awk '{print $1}') \
@@ -93,10 +114,8 @@ function prompt_picker_for_window() {
     done < "$pairs_file"
 
     pane_exec "$picker_pane_id" "$CURRENT_DIR/hint_mode.sh \"$current_pane_id\" \"$picker_pane_id\" \"$last_pane_id\" \"$picker_window_id\" \"$pairs_file\" \"$captures_dir\""
-
-    echo "$picker_pane_id"
 }
 
 last_pane_id=$(tmux display -pt':.{last}' '#{pane_id}' 2>/dev/null)
 current_pane_id=$(tmux list-panes -F "#{pane_id}:#{?pane_active,active,nope}" | grep active | cut -d: -f1)
-prompt_picker_for_window "$current_pane_id" "$last_pane_id"
+prompt_picker_for_window "$current_pane_id" "$last_pane_id" >/dev/null

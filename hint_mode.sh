@@ -64,7 +64,10 @@ function render_hinted_panes() {
 
 function swap_all_panes() {
     while IFS=$'\t' read -r src_pane picker_pane; do
-        tmux swap-pane -s "$src_pane" -t "$picker_pane"
+        # -d so swap-pane doesn't shift which pane is active. without it,
+        # each swap re-marks its target as active and the loop finishes with
+        # whichever pair ran last as active — clobbering the user's selection.
+        tmux swap-pane -d -s "$src_pane" -t "$picker_pane"
     done < "$pairs_file"
 }
 
