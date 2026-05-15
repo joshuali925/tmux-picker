@@ -9,83 +9,82 @@ captures_dir=$3
 # tmux display -p reports the *client's* active pane, which is still the
 # source window at this point — so use $TMUX_PANE for our own pane id.
 picker_pane_id=$TMUX_PANE
+
+declare -a src_panes picker_panes
+declare -A picker_tty_by_src
+while IFS=$'\t' read -r src_pane picker_pane; do
+    src_panes+=("$src_pane")
+    picker_panes+=("$picker_pane")
+    [[ $picker_pane == "$picker_pane_id" ]] && current_pane_id=$src_pane
+done < "$pairs_file"
+
 picker_window_id=$(tmux display -pt "$picker_pane_id" '#{window_id}')
-current_pane_id=$(awk -F$'\t' -v p="$picker_pane_id" '$2==p{print $1; exit}' "$pairs_file")
+
+# Replaces a list-panes|grep fork with a single targeted query.
+pane_was_zoomed=$(tmux display -pt "$current_pane_id" '#{?window_zoomed_flag,1,0}')
+
+# Fetch every picker tty in one list-panes; the render loop used to do a
+# `tmux display` per pane.
+while IFS=$'\t' read -r pid tty; do
+    picker_tty_by_src[$pid]=$tty
+done < <(tmux list-panes -t "$picker_pane_id" -F "#{pane_id}	#{pane_tty}")
 
 eval "$(tmux show-env -g -s | grep ^PICKER)"
 
 match_lookup_table=$(mktemp)
 hinted_dir=$(mktemp -d)
 
-export match_lookup_table hinted_dir
-
-function lookup_match() {
-    local input=$1
-
-    input="$(echo "$input" | tr "A-Z" "a-z")"
-    grep -i "^$input:" $match_lookup_table | sed "s/^$input://" | head -n 1
-}
+declare -A match_by_hint
 
 function extract_hints() {
     : > "$match_lookup_table"
 
-    # NUM_HINTS_NEEDED picks the right hint pool size in hinter.awk, so it
-    # must be set before any pane is hinted. Count first, cache, then hint
-    # each pane with a disjoint hint_offset so keys are unique window-wide.
-    local total_matches=0
-    local -a counts
-    local i=0
-    while IFS=$'\t' read -r src_pane picker_pane; do
-        counts[i]=$(gawk -f "$CURRENT_DIR/counter.awk" < "$captures_dir/$src_pane")
-        total_matches=$((total_matches + counts[i]))
-        i=$((i + 1))
-    done < "$pairs_file"
-    export NUM_HINTS_NEEDED=$total_matches
+    # Single gawk pass over every captured pane: one process startup, one
+    # regex compile, and the hint pool is chosen at END from the global
+    # unique-match count.
+    local -a capture_paths
+    local src
+    for src in "${src_panes[@]}"; do
+        capture_paths+=("$captures_dir/$src")
+    done
 
-    local hint_offset=0
-    i=0
-    while IFS=$'\t' read -r src_pane picker_pane; do
-        HINT_OFFSET=$hint_offset gawk -f "$CURRENT_DIR/hinter.awk" \
-            3>>"$match_lookup_table" \
-            < "$captures_dir/$src_pane" \
-            > "$hinted_dir/$src_pane"
-        hint_offset=$((hint_offset + counts[i]))
-        i=$((i + 1))
-    done < "$pairs_file"
+    HINTED_DIR=$hinted_dir gawk -f "$CURRENT_DIR/hinter.awk" \
+        3>>"$match_lookup_table" \
+        "${capture_paths[@]}" >/dev/null
+
+    # Cache hint→match in memory so per-keystroke lookup is fork-free.
+    local hint match
+    while IFS=: read -r hint match; do
+        match_by_hint[$hint]=$match
+    done < "$match_lookup_table"
 }
 
 function render_hinted_panes() {
-    while IFS=$'\t' read -r src_pane picker_pane; do
-        local picker_tty
-        picker_tty=$(tmux display -pt "$picker_pane" '#{pane_tty}')
-        if [[ -n "$picker_tty" && -w "$picker_tty" ]]; then
-            # clear first so the /bin/sh prompt doesn't shine through
+    local i
+    for (( i=0; i<${#src_panes[@]}; i++ )); do
+        local src=${src_panes[i]} picker=${picker_panes[i]}
+        local picker_tty=${picker_tty_by_src[$picker]}
+        if [[ -n $picker_tty && -w $picker_tty ]]; then
+            # clear first so the picker pane's prior content doesn't shine through
             printf '\x1b[2J\x1b[H' > "$picker_tty"
-            cat "$hinted_dir/$src_pane" > "$picker_tty"
+            cat "$hinted_dir/$src" > "$picker_tty"
         fi
-    done < "$pairs_file"
+    done
 }
 
 function swap_all_panes() {
     # -d keeps the active pane unchanged across swaps; without it the loop
     # leaves whichever pair ran last as active, clobbering the user's slot.
-    while IFS=$'\t' read -r src_pane picker_pane; do
-        tmux swap-pane -d -s "$src_pane" -t "$picker_pane"
-    done < "$pairs_file"
+    local i
+    for (( i=0; i<${#src_panes[@]}; i++ )); do
+        tmux swap-pane -d -s "${src_panes[i]}" -t "${picker_panes[i]}"
+    done
 }
 
 BACKSPACE=$'\177'
 
 input=''
 result=''
-
-function is_pane_zoomed() {
-    local pane_id=$1
-
-    tmux list-panes \
-        -F "#{pane_id}:#{?pane_active,active,nope}:#{?window_zoomed_flag,zoomed,nope}" \
-        | grep -c "^${pane_id}:active:zoomed$"
-}
 
 function zoom_pane() {
     local pane_id=$1
@@ -118,34 +117,17 @@ function handle_exit() {
 
 function is_valid_input() {
     local input=$1
-    local is_valid=1
-
-    if [[ $input == "" ]] || [[ $input == "<ESC>" ]]; then
-        is_valid=1
-    else
-        for (( i=0; i<${#input}; i++ )); do
-            char=${input:$i:1}
-
-            if [[ ! "$char" =~ ^[a-zA-Z]$ ]]; then
-                is_valid=0
-                break
-            fi
-        done
-    fi
-
-    echo $is_valid
+    [[ -z $input || $input == "<ESC>" || $input =~ ^[a-zA-Z]+$ ]]
 }
 
 function hide_cursor() {
-    echo -n $(tput civis)
+    # Inline DECTCEM hide instead of forking tput.
+    printf '\x1b[?25l'
 }
 
 trap "handle_exit" EXIT
 
 export PICKER_PATTERNS=$PICKER_PATTERNS1
-export PICKER_BLACKLIST_PATTERNS=$PICKER_BLACKLIST_PATTERNS
-
-pane_was_zoomed=$(is_pane_zoomed "$current_pane_id")
 
 extract_hints
 render_hinted_panes
@@ -187,7 +169,7 @@ while read -rsn1 char; do
 
     fi
 
-    if [[ ! $(is_valid_input "$char") == "1" ]]; then
+    if ! is_valid_input "$char"; then
         continue
     fi
 
@@ -200,7 +182,7 @@ while read -rsn1 char; do
         input="$input$char"
     fi
 
-    result=$(lookup_match "$input")
+    result=${match_by_hint[${input,,}]}
 
     if [[ -z $result ]]; then
         continue
