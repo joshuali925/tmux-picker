@@ -12,8 +12,6 @@ function init_picker_window() {
     local picker_pane_id=${picker_ids%%:*}
     local picker_window_id=${picker_ids#*:}
 
-    # Batch every split-window plus the layout restore into a single tmux
-    # invocation so N+1 forks collapse to one.
     local i cmd=""
     for (( i=1; i<source_pane_count; i++ )); do
         cmd+="${cmd:+ \\; }split-window -d -t $picker_pane_id 'sleep 2147483647'"
@@ -30,8 +28,8 @@ function init_picker_window() {
 
 function list_panes_sorted() {
     local target=${1:+-t $1}
-    tmux list-panes $target -F "#{pane_id} #{pane_top} #{pane_left}" \
-        | sort -k2,2n -k3,3n | awk '{print $1}'
+    tmux list-panes $target -F "#{pane_top} #{pane_left} #{pane_id}" \
+        | sort -k1,1n -k2,2n | cut -d' ' -f3
 }
 
 function prompt_picker_for_window() {
@@ -52,18 +50,15 @@ function prompt_picker_for_window() {
     mapfile -t picker_panes < <(list_panes_sorted "$picker_window_id")
 
     # Realign picker panes so picker_pane_id (which runs hint_mode.sh) pairs
-    # with current_pane_id. After the final swap_all_panes, picker_pane_id
-    # lands in current_pane_id's old slot — keeping it active so keystrokes
-    # reach the read loop, and rendering hints in the right place when
-    # current_pane_id was zoomed.
+    # with current_pane_id — after the final swap, picker_pane_id lands in
+    # current_pane_id's slot, staying active so keystrokes reach the read loop
+    # and hints render correctly when current_pane_id was zoomed.
     local current_idx=-1 picker_idx=-1 i
     for (( i=0; i<source_pane_count; i++ )); do
         [[ ${source_panes[i]} == "$current_pane_id" ]] && current_idx=$i
         [[ ${picker_panes[i]} == "$picker_pane_id" ]] && picker_idx=$i
     done
     if (( current_idx >= 0 && picker_idx >= 0 && current_idx != picker_idx )); then
-        # The swap exchanges the two pane positions; reflect that in the
-        # local array instead of re-querying tmux.
         tmux swap-pane -s "$picker_pane_id" -t "${picker_panes[current_idx]}"
         local tmp=${picker_panes[picker_idx]}
         picker_panes[picker_idx]=${picker_panes[current_idx]}
@@ -79,8 +74,6 @@ function prompt_picker_for_window() {
     local captures_dir
     captures_dir=$(mktemp -d)
 
-    # One tmux call to fetch capture metadata for every source pane, instead
-    # of N round-trips. Filtered to the source window via #{pane_id} match.
     declare -A pane_height pane_scroll pane_in_mode
     local pane_id height scroll mode
     while IFS=$'\t' read -r pane_id height scroll mode; do
@@ -89,8 +82,7 @@ function prompt_picker_for_window() {
         pane_in_mode[$pane_id]=$mode
     done < <(tmux list-panes -t "$current_pane_id" -F "#{pane_id}	#{pane_height}	#{scroll_position}	#{?pane_in_mode,1,0}")
 
-    # Run every capture-pane in parallel — they're independent and tmux
-    # serializes them server-side anyway, but we save the per-fork wall time.
+    # capture-pane in parallel; tmux serializes server-side but we save fork wall time.
     local src_pane start_capture end_capture
     for (( i=0; i<source_pane_count; i++ )); do
         src_pane=${source_panes[i]}
@@ -105,8 +97,6 @@ function prompt_picker_for_window() {
     done
     wait
 
-    # respawn-pane is synchronous and skips the shell startup + send-keys
-    # round-trip that send-keys-to-/bin/sh requires.
     tmux respawn-pane -k -t "$picker_pane_id" \
         "$CURRENT_DIR/hint_mode.sh \"$last_pane_id\" \"$pairs_file\" \"$captures_dir\""
 }

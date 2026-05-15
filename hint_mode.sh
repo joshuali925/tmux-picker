@@ -11,22 +11,20 @@ captures_dir=$3
 picker_pane_id=$TMUX_PANE
 
 declare -a src_panes picker_panes
-declare -A picker_tty_by_src
 while IFS=$'\t' read -r src_pane picker_pane; do
     src_panes+=("$src_pane")
     picker_panes+=("$picker_pane")
     [[ $picker_pane == "$picker_pane_id" ]] && current_pane_id=$src_pane
 done < "$pairs_file"
 
-picker_window_id=$(tmux display -pt "$picker_pane_id" '#{window_id}')
-
-# Replaces a list-panes|grep fork with a single targeted query.
 pane_was_zoomed=$(tmux display -pt "$current_pane_id" '#{?window_zoomed_flag,1,0}')
 
-# Fetch every picker tty in one list-panes; the render loop used to do a
-# `tmux display` per pane.
+# Fetch picker ttys after respawn-pane reassigns picker_pane_id's pty —
+# capturing them in tmux-picker.sh would store the pre-respawn tty, which
+# the user no longer owns (-> EACCES when gawk redirects to it).
+declare -A picker_tty_by_id
 while IFS=$'\t' read -r pid tty; do
-    picker_tty_by_src[$pid]=$tty
+    picker_tty_by_id[$pid]=$tty
 done < <(tmux list-panes -t "$picker_pane_id" -F "#{pane_id}	#{pane_tty}")
 
 eval "$(tmux show-env -g -s | grep ^PICKER)"
@@ -35,24 +33,28 @@ match_lookup_table=$(mktemp)
 
 declare -A match_by_hint
 
+function build_swap_cmd() {
+    local i cmd=""
+    for (( i=0; i<${#src_panes[@]}; i++ )); do
+        cmd+="${cmd:+ \\; }swap-pane -d -s ${src_panes[i]} -t ${picker_panes[i]}"
+    done
+    printf '%s' "$cmd"
+}
+
 function extract_hints() {
     : > "$match_lookup_table"
 
-    # Single gawk pass over every captured pane: one process startup, one
-    # regex compile. TTY_PATHS lets awk paint hints straight to each picker
-    # pane in END, skipping a temp file + cat round-trip per pane.
     local -a capture_paths
-    local i tty_paths=""
+    local i tty_list=""
     for (( i=0; i<${#src_panes[@]}; i++ )); do
         capture_paths+=("$captures_dir/${src_panes[i]}")
-        tty_paths+="${src_panes[i]}"$'\t'"${picker_tty_by_src[${picker_panes[i]}]}"$'\n'
+        tty_list+="${picker_tty_by_id[${picker_panes[i]}]}"$'\n'
     done
 
-    TTY_PATHS=$tty_paths gawk -f "$CURRENT_DIR/hinter.awk" \
+    TTY_LIST=$tty_list gawk -f "$CURRENT_DIR/hinter.awk" \
         3>>"$match_lookup_table" \
         "${capture_paths[@]}"
 
-    # Cache hint→match in memory so per-keystroke lookup is fork-free.
     local hint match
     while IFS=: read -r hint match; do
         [[ -z $hint ]] && continue
@@ -61,14 +63,10 @@ function extract_hints() {
 }
 
 function swap_all_panes_and_zoom() {
-    # -d keeps the active pane unchanged across swaps; without it the loop
-    # leaves whichever pair ran last as active, clobbering the user's slot.
-    # Batched as one tmux command (swap × N + optional zoom) so the whole
-    # transition costs one IPC round-trip.
-    local i cmd=""
-    for (( i=0; i<${#src_panes[@]}; i++ )); do
-        cmd+="${cmd:+ \\; }swap-pane -d -s ${src_panes[i]} -t ${picker_panes[i]}"
-    done
+    # -d keeps the active pane unchanged; without it the loop leaves whichever
+    # pair ran last as active, clobbering the user's slot.
+    local cmd
+    cmd=$(build_swap_cmd)
     [[ $pane_was_zoomed == "1" ]] && cmd+=" \\; resize-pane -Z -t $picker_pane_id"
     eval "tmux $cmd"
 }
@@ -79,14 +77,8 @@ input=''
 result=''
 
 function revert_to_original_panes() {
-    # Build one tmux command that swaps every pane back, restores the
-    # last-pane / current-pane focus order, and (if needed) re-zooms the
-    # current pane. Replaces N swap-pane forks plus 2 select-panes plus a
-    # resize-pane with a single IPC round-trip.
-    local i cmd=""
-    for (( i=0; i<${#src_panes[@]}; i++ )); do
-        cmd+="${cmd:+ \\; }swap-pane -d -s ${src_panes[i]} -t ${picker_panes[i]}"
-    done
+    local cmd
+    cmd=$(build_swap_cmd)
     if [[ -n "$last_pane_id" ]]; then
         cmd+=" \\; select-pane -t $last_pane_id \\; select-pane -t $current_pane_id"
     fi
@@ -102,7 +94,7 @@ function handle_exit() {
     fi
 
     rm -rf "$pairs_file" "$captures_dir" "$match_lookup_table"
-    tmux kill-window -t "$picker_window_id"
+    tmux kill-window -t "$picker_pane_id"
 }
 
 
@@ -112,7 +104,6 @@ function is_valid_input() {
 }
 
 function hide_cursor() {
-    # Inline DECTCEM hide instead of forking tput.
     printf '\x1b[?25l'
 }
 
