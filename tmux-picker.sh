@@ -65,11 +65,14 @@ function prompt_picker_for_window() {
         picker_panes[current_idx]=$tmp
     fi
 
-    local pairs_file
-    pairs_file=$(mktemp)
+    # Pass src/picker pane pairs through tmux env (small, ephemeral, no
+    # on-disk file). hint_mode.sh unsets it on exit. Newline-separated
+    # records, tab-separated fields.
+    local pairs=""
     for (( i=0; i<source_pane_count; i++ )); do
-        printf '%s\t%s\n' "${source_panes[i]}" "${picker_panes[i]}"
-    done > "$pairs_file"
+        pairs+="${source_panes[i]}"$'\t'"${picker_panes[i]}"$'\n'
+    done
+    tmux setenv -g PICKER_PAIRS "$pairs"
 
     local captures_dir
     captures_dir=$(mktemp -d)
@@ -98,7 +101,7 @@ function prompt_picker_for_window() {
     wait
 
     tmux respawn-pane -k -t "$picker_pane_id" \
-        "$CURRENT_DIR/hint_mode.sh \"$last_pane_id\" \"$pairs_file\" \"$captures_dir\""
+        "$CURRENT_DIR/hint_mode.sh \"$last_pane_id\" \"$captures_dir\""
 }
 
 last_pane_id=$(tmux display -pt':.{last}' '#{pane_id}' 2>/dev/null)

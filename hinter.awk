@@ -189,5 +189,5 @@ END {
         close(out)
     }
 
-    print hint_lookup | "cat 1>&3"
+    printf "%s", hint_lookup
 }

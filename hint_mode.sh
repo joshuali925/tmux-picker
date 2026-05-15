@@ -3,19 +3,21 @@
 CURRENT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 last_pane_id=$1
-pairs_file=$2
-captures_dir=$3
+captures_dir=$2
 
 # tmux display -p reports the *client's* active pane, which is still the
 # source window at this point — so use $TMUX_PANE for our own pane id.
 picker_pane_id=$TMUX_PANE
 
+eval "$(tmux show-env -gs | grep ^PICKER)"
+
 declare -a src_panes picker_panes
 while IFS=$'\t' read -r src_pane picker_pane; do
+    [[ -z $src_pane ]] && continue
     src_panes+=("$src_pane")
     picker_panes+=("$picker_pane")
     [[ $picker_pane == "$picker_pane_id" ]] && current_pane_id=$src_pane
-done < "$pairs_file"
+done <<< "$PICKER_PAIRS"
 
 pane_was_zoomed=$(tmux display -pt "$current_pane_id" '#{?window_zoomed_flag,1,0}')
 
@@ -26,10 +28,6 @@ declare -A picker_tty_by_id
 while IFS=$'\t' read -r pid tty; do
     picker_tty_by_id[$pid]=$tty
 done < <(tmux list-panes -t "$picker_pane_id" -F "#{pane_id}	#{pane_tty}")
-
-eval "$(tmux show-env -g -s | grep ^PICKER)"
-
-match_lookup_table=$(mktemp)
 
 declare -A match_by_hint
 
@@ -42,8 +40,6 @@ function build_swap_cmd() {
 }
 
 function extract_hints() {
-    : > "$match_lookup_table"
-
     local -a capture_paths
     local i tty_list=""
     for (( i=0; i<${#src_panes[@]}; i++ )); do
@@ -51,15 +47,11 @@ function extract_hints() {
         tty_list+="${picker_tty_by_id[${picker_panes[i]}]}"$'\n'
     done
 
-    TTY_LIST=$tty_list gawk -f "$CURRENT_DIR/hinter.awk" \
-        3>>"$match_lookup_table" \
-        "${capture_paths[@]}"
-
     local hint match
     while IFS=: read -r hint match; do
         [[ -z $hint ]] && continue
         match_by_hint[$hint]=$match
-    done < "$match_lookup_table"
+    done < <(TTY_LIST=$tty_list gawk -f "$CURRENT_DIR/hinter.awk" "${capture_paths[@]}")
 }
 
 function swap_all_panes_and_zoom() {
@@ -93,8 +85,8 @@ function handle_exit() {
         run_picker_copy_command "$result" "$input"
     fi
 
-    rm -rf "$pairs_file" "$captures_dir" "$match_lookup_table"
-    tmux kill-window -t "$picker_pane_id"
+    rm -rf "$captures_dir"
+    tmux setenv -gu PICKER_PAIRS \; kill-window -t "$picker_pane_id"
 }
 
 
