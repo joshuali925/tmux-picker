@@ -6,8 +6,10 @@ last_pane_id=$1
 pairs_file=$2
 captures_dir=$3
 
-picker_pane_id=$(tmux display -p '#{pane_id}')
-picker_window_id=$(tmux display -p '#{window_id}')
+# tmux display -p reports the *client's* active pane, which is still the
+# source window at this point — so use $TMUX_PANE for our own pane id.
+picker_pane_id=$TMUX_PANE
+picker_window_id=$(tmux display -pt "$picker_pane_id" '#{window_id}')
 current_pane_id=$(awk -F$'\t' -v p="$picker_pane_id" '$2==p{print $1; exit}' "$pairs_file")
 
 eval "$(tmux show-env -g -s | grep ^PICKER)"
