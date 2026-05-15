@@ -55,20 +55,21 @@ BEGIN {
         line_match = matches[0]
 
         if (line_match !~ blacklist) {
-            # All sub-patterns start with a prefix group (sometimes empty) that should not be highlighted, e.g.
-            #     ((prefix_a)(item_a))|((prefix_b)(item_a))
-            # So matches array is looks like: 
-            #    ||||prefix_b item_b|prefix_b|item_b|
-            #    or    
-            #    |prefix_a item_a|prefix_a|item_a||||
-            # Unfortunately, we don't know the index of first matching group.
-            num_groups = length(matches) / 3; # array contains: idx, idx-start, idx-length for each group
-            for (i = 1; i <= num_groups; i++) {
-                if (matches[i] != "") {
-                    line_match = substr(line_match, 1 + matches[++i, "length"])
-                    pre_match = pre_match matches[i]
-                    break;
+            # Each top-level alternation is ((prefix)body), so after a match
+            # the smallest populated capture index >= 1 is the outer group;
+            # the next index is its prefix. gawk only populates entries for
+            # the alternation that actually matched, so we can't pre-compute
+            # the index — find the smallest numeric key.
+            outer_idx = 0
+            for (k in matches) {
+                if (k+0 == k && k > 0 && (outer_idx == 0 || k+0 < outer_idx)) {
+                    outer_idx = k+0
                 }
+            }
+            if (outer_idx > 0) {
+                prefix_idx = outer_idx + 1
+                line_match = substr(line_match, 1 + matches[prefix_idx, "length"])
+                pre_match = pre_match matches[prefix_idx]
             }
 
             # strip any color escapes embedded inside the match so the

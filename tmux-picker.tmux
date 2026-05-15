@@ -48,44 +48,60 @@ function array_join() {
 #   ([0-9]+)
 #   [0-9]+
 
-CS=$'\x1b'"\[[0-9;]{1,9}m" # color escape sequence
-FILE_CHARS="[[:alnum:]_.#$%&+=/@~-]"
-FILE_START_CHARS="[[:space:]:<>)(&#'\"]"
-# allow color escapes to be embedded inside paths so prompts that color
-# segments individually (e.g. "^[[34m/^[[1mlocal^[[0m...") still match end-to-end
-FILE_CHARS_OR_CS="($CS|$FILE_CHARS)"
-
-# default patterns group
+# patterns mirror wezterm's quick-select highlights: user-provided patterns
+# first, then wezterm's built-in defaults. each top-level alternation is
+# wrapped as ((prefix)item) so hinter.awk can strip a leading prefix from
+# the highlighted/selected text — equivalent to wezterm picking the
+# highest-indexed matched capture group.
+#
+# tmux-picker captures with `tmux capture-pane -e`, so input contains ANSI
+# color escapes. without an explicit boundary the regex can match starting
+# inside an escape (e.g. the digits of "\x1b[38;5;231m") and pull part of
+# the escape into the hint. SP forces every match to be preceded by a CS,
+# BOL, or a clean delimiter; FCS/TCS allow CS escapes to appear inside the
+# body so multi-color paths still match end-to-end.
+CS=$'\x1b'"\[[0-9;]{1,9}m"
+START_DELIM="[[:space:]:<>)(&#'\"]"
+SP="($CS|^|$START_DELIM)"
+FCS="([[:alnum:]_.%/-]|$CS)"
+TCS="([[:alnum:]_.%/~-]|$CS)"
 PATTERNS_LIST1=(
-"(($CS|^|$FILE_START_CHARS)$FILE_CHARS_OR_CS*/$FILE_CHARS_OR_CS+)" # file paths with /
-"(($CS|^|$FILE_START_CHARS)$FILE_CHARS_OR_CS+\.$FILE_CHARS{1,4})" # anything that looks like file/file path but not too short
-"(()[0-9]+\.[0-9]{3,}|[0-9]{5,})" # long numbers
-"(()[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})" # UUIDs
-"(()[0-9a-f]{7,40})" # hex numbers (e.g. git hashes)
-"(()(https?://|git@|git://|ssh://|ftp://|file:///)[[:alnum:]?=%/_.:,;~@!#$&)(*+-]*)" # URLs
-"(()[[:digit:]]{1,3}\.[[:digit:]]{1,3}\.[[:digit:]]{1,3}\.[[:digit:]]{1,3})" # IP adresses
+# user patterns from wezterm config
+"(${SP}${FCS}*\.${TCS}+)"                                                                           # filename / dotted path
+"(${SP}ds-[[:alnum:]_]+)"                                                                           # ds-* ids
+"(${SP}i-[[:alnum:]_]+)"                                                                            # i-* ids (e.g. EC2 instance)
+"(${SP}[0-9]+:[[:alnum:]_-]+)"                                                                      # number:word
+# wezterm built-in defaults
+"((\[[^]]*\]\()[^)]+)"                                                                              # markdown_url
+"(${SP}(https?://|git@|git://|ssh://|ftp://|file://)[^[:space:]]+)"                                 # url
+"((--- a/)[^[:space:]]+)"                                                                           # diff_a
+"((\+\+\+ b/)[^[:space:]]+)"                                                                        # diff_b
+"((sha256:)[0-9a-f]{64})"                                                                           # docker
+"(${SP}${FCS}*/${FCS}+)"                                                                            # path (anything containing /)
+"(${SP}#[0-9a-fA-F]{6})"                                                                            # color
+"(${SP}[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"                               # uuid
+"(${SP}Qm[[:alnum:]]{44})"                                                                          # ipfs
+"(${SP}[0-9a-f]{7,40})"                                                                             # sha
+"(${SP}[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})"                                             # ip
+"(${SP}[A-Fa-f0-9:]+:+[A-Fa-f0-9:]+[%[:alnum:]_]+)"                                                 # ipv6
+"(${SP}0x[0-9a-fA-F]+)"                                                                             # address
+"(${SP}[0-9]{4,})"                                                                                  # number
 )
 
-# alternative patterns group (shown after pressing the SPACE key)
-PATTERNS_LIST2=(
-"(($CS|^|$FILE_START_CHARS)$FILE_CHARS_OR_CS*/$FILE_CHARS_OR_CS+)" # file paths with /
-"(($CS|^|$FILE_START_CHARS)$FILE_CHARS{5,})" # anything that looks like file/file path but not too short
-"(()(https?://|git@|git://|ssh://|ftp://|file:///)[[:alnum:]?=%/_.:,;~@!#$&)(*+-]*)" # URLs
-)
+# kept as an alias for back-compat with the SPACE-toggle codepath; same as LIST1
+PATTERNS_LIST2=("${PATTERNS_LIST1[@]}")
 
-# items that will not be hightlighted
-BLACKLIST=(
-"(deleted|modified|renamed|copied|master|mkdir|[Cc]hanges|update|updated|committed|commit|working|discard|directory|staged|add/rm|checkout)"
-)
+# wezterm has no equivalent blacklist; leave empty so we don't filter matches
+BLACKLIST=()
 
 # "-n M-f" for Alt-F without prefix
 # "f" for prefix-F
 PICKER_KEY="-n M-f"
 set_tmux_env PICKER_KEY "$PICKER_KEY"
 
-set_tmux_env PICKER_PATTERNS1 $(array_join "|" "${PATTERNS_LIST1[@]}")
-set_tmux_env PICKER_PATTERNS2 $(array_join "|" "${PATTERNS_LIST2[@]}")
-set_tmux_env PICKER_BLACKLIST_PATTERNS $(array_join "|" "${BLACKLIST[@]}")
+set_tmux_env PICKER_PATTERNS1 "$(array_join "|" "${PATTERNS_LIST1[@]}")"
+set_tmux_env PICKER_PATTERNS2 "$(array_join "|" "${PATTERNS_LIST2[@]}")"
+set_tmux_env PICKER_BLACKLIST_PATTERNS "$(array_join "|" "${BLACKLIST[@]}")"
 
 # Use direct ANSI escape sequences instead of tput (avoids SI/^O character issues in tmux 3.4+)
 # Format: \x1b[<attrs>m where attrs: 0=reset, 1=bold, 30-37=fg color, 40-47=bg color
