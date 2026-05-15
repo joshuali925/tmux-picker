@@ -118,8 +118,6 @@ function hide_cursor() {
 
 trap "handle_exit" EXIT
 
-export PICKER_PATTERNS=$PICKER_PATTERNS1
-
 extract_hints
 swap_all_panes_and_zoom
 

@@ -8,7 +8,7 @@ This is a slimmed-down, improved and extended fork of [tmux-fingers](https://git
 
 # Usage
 
-Press ( <kbd>Meta</kbd> + <kbd>F</kbd> ) to enter **[picker]** hint mode. Relevant stuff (file paths, URLs,
+Press ( <kbd>Meta</kbd> + <kbd>/</kbd> ) to enter **[picker]** hint mode. Relevant stuff (file paths, URLs,
 git SHAs, IPs, UUIDs, …) across **every pane in the current window** is highlighted with letter hints.
 
 * Type a hint in **lowercase** to paste the match into the originating pane (a trailing space is appended).
@@ -37,8 +37,8 @@ sourcing it) and reload tmux. The variables of interest:
 ### Key binding
 
 ```bash
-# default: Alt-F, no tmux prefix needed
-PICKER_KEY="-n M-f"
+# default: Alt-/, no tmux prefix needed
+PICKER_KEY="-n M-/"
 # prefix-F instead:
 # PICKER_KEY="f"
 ```
@@ -47,7 +47,7 @@ The string is passed verbatim to `tmux bind`, so any flags `tmux bind` accepts w
 
 ### Patterns
 
-`PATTERNS_LIST1` is a bash array of extended regexes (gawk flavor) joined with `|` into
+`PATTERNS_LIST` is a bash array of extended regexes (gawk flavor) joined with `|` into
 `PICKER_PATTERNS`. **Each pattern must be wrapped as `((prefix)body)`** — the matcher strips the
 leading `prefix` capture from the hinted text so the visible hint covers only the body. The helper
 variables defined at the top of `tmux-picker.tmux` make this convenient:
@@ -63,7 +63,7 @@ Add a pattern by appending another `"((prefix)body)"` entry to the array. For ex
 highlight Jira-style ticket IDs:
 
 ```bash
-PATTERNS_LIST1+=(
+PATTERNS_LIST+=(
     "(${SP}[A-Z]+-[0-9]+)"
 )
 ```
@@ -111,7 +111,7 @@ action (e.g. open in `$EDITOR`).
 
 # Troubleshooting
 
-- <kbd>Meta</kbd> + <kbd>F</kbd> does not work in copy mode
+- <kbd>Meta</kbd> + <kbd>/</kbd> does not work in copy mode
     - Set `set-option -g mode-keys vi`, adjust your key bindings or change `PICKER_KEY`
 
 # Acknowledgements

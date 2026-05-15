@@ -36,7 +36,7 @@ CS=$'\x1b'"\[[0-9;]{1,9}m"
 START_DELIM="[[:space:]:<>)(&#'\"]"
 SP="($CS|^|$START_DELIM)"
 FCS="([[:alnum:]_.%/~-]|$CS)"
-PATTERNS_LIST1=(
+PATTERNS_LIST=(
 "(${SP}${FCS}*\.${FCS}+)"                                                                           # filename / dotted path
 "(${SP}ds-[[:alnum:]_]+)"
 "(${SP}i-[[:alnum:]_]+)"
@@ -59,12 +59,12 @@ PATTERNS_LIST1=(
 
 BLACKLIST=()
 
-# "-n M-f" for Alt-F without prefix
+# "-n M-/" for Alt-/ without prefix
 # "f" for prefix-F
-PICKER_KEY="-n M-f"
+PICKER_KEY="-n M-/"
 set_tmux_env PICKER_KEY "$PICKER_KEY"
 
-set_tmux_env PICKER_PATTERNS1 "$(array_join "|" "${PATTERNS_LIST1[@]}")"
+set_tmux_env PICKER_PATTERNS "$(array_join "|" "${PATTERNS_LIST[@]}")"
 set_tmux_env PICKER_BLACKLIST_PATTERNS "$(array_join "|" "${BLACKLIST[@]}")"
 
 # Direct ANSI escapes — tput emits SI/^O bytes that tmux 3.4+ mangles.
