@@ -35,10 +35,9 @@ function array_join() {
 CS=$'\x1b'"\[[0-9;]{1,9}m"
 START_DELIM="[[:space:]:<>)(&#'\"]"
 SP="($CS|^|$START_DELIM)"
-FCS="([[:alnum:]_.%/-]|$CS)"
-TCS="([[:alnum:]_.%/~-]|$CS)"
+FCS="([[:alnum:]_.%/~-]|$CS)"
 PATTERNS_LIST1=(
-"(${SP}${FCS}*\.${TCS}+)"                                                                           # filename / dotted path
+"(${SP}${FCS}*\.${FCS}+)"                                                                           # filename / dotted path
 "(${SP}ds-[[:alnum:]_]+)"
 "(${SP}i-[[:alnum:]_]+)"
 "(${SP}[0-9]+:[[:alnum:]_-]+)"
