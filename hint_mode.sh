@@ -3,7 +3,6 @@
 CURRENT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 last_pane_id=$1
-captures_dir=$2
 
 # tmux display -p reports the *client's* active pane, which is still the
 # source window at this point — so use $TMUX_PANE for our own pane id.
@@ -11,11 +10,13 @@ picker_pane_id=$TMUX_PANE
 
 eval "$(tmux show-env -gs | grep ^PICKER)"
 
-declare -a src_panes picker_panes
-while IFS=$'\t' read -r src_pane picker_pane; do
+declare -a src_panes picker_panes capture_starts capture_ends
+while IFS=$'\t' read -r src_pane picker_pane start end; do
     [[ -z $src_pane ]] && continue
     src_panes+=("$src_pane")
     picker_panes+=("$picker_pane")
+    capture_starts+=("$start")
+    capture_ends+=("$end")
     [[ $picker_pane == "$picker_pane_id" ]] && current_pane_id=$src_pane
 done <<< "$PICKER_PAIRS"
 
@@ -40,18 +41,17 @@ function build_swap_cmd() {
 }
 
 function extract_hints() {
-    local -a capture_paths
-    local i tty_list=""
+    local i tty_list="" capture_args=""
     for (( i=0; i<${#src_panes[@]}; i++ )); do
-        capture_paths+=("$captures_dir/${src_panes[i]}")
         tty_list+="${picker_tty_by_id[${picker_panes[i]}]}"$'\n'
+        capture_args+=" <(tmux capture-pane -e -J -p -t ${src_panes[i]} -S ${capture_starts[i]} -E ${capture_ends[i]})"
     done
 
     local hint match
     while IFS=: read -r hint match; do
         [[ -z $hint ]] && continue
         match_by_hint[$hint]=$match
-    done < <(TTY_LIST=$tty_list gawk -f "$CURRENT_DIR/hinter.awk" "${capture_paths[@]}")
+    done < <(eval "TTY_LIST=\$tty_list gawk -f \"\$CURRENT_DIR/hinter.awk\"$capture_args")
 }
 
 function swap_all_panes_and_zoom() {
@@ -85,7 +85,6 @@ function handle_exit() {
         run_picker_copy_command "$result" "$input"
     fi
 
-    rm -rf "$captures_dir"
     tmux setenv -gu PICKER_PAIRS \; kill-window -t "$picker_pane_id"
 }
 

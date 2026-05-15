@@ -65,18 +65,6 @@ function prompt_picker_for_window() {
         picker_panes[current_idx]=$tmp
     fi
 
-    # Pass src/picker pane pairs through tmux env (small, ephemeral, no
-    # on-disk file). hint_mode.sh unsets it on exit. Newline-separated
-    # records, tab-separated fields.
-    local pairs=""
-    for (( i=0; i<source_pane_count; i++ )); do
-        pairs+="${source_panes[i]}"$'\t'"${picker_panes[i]}"$'\n'
-    done
-    tmux setenv -g PICKER_PAIRS "$pairs"
-
-    local captures_dir
-    captures_dir=$(mktemp -d)
-
     declare -A pane_height pane_scroll pane_in_mode
     local pane_id height scroll mode
     while IFS=$'\t' read -r pane_id height scroll mode; do
@@ -85,8 +73,10 @@ function prompt_picker_for_window() {
         pane_in_mode[$pane_id]=$mode
     done < <(tmux list-panes -t "$current_pane_id" -F "#{pane_id}	#{pane_height}	#{scroll_position}	#{?pane_in_mode,1,0}")
 
-    # capture-pane in parallel; tmux serializes server-side but we save fork wall time.
-    local src_pane start_capture end_capture
+    # Stash one row per pane in tmux env: src_pane / picker_pane / capture
+    # start / capture end. hint_mode.sh streams capture-pane through process
+    # substitution into gawk, so no captures_dir on disk.
+    local pairs="" src_pane start_capture end_capture
     for (( i=0; i<source_pane_count; i++ )); do
         src_pane=${source_panes[i]}
         if [[ ${pane_in_mode[$src_pane]} == "1" ]]; then
@@ -96,12 +86,12 @@ function prompt_picker_for_window() {
             start_capture=0
             end_capture="-"
         fi
-        tmux capture-pane -e -J -p -t "$src_pane" -E "$end_capture" -S "$start_capture" > "$captures_dir/$src_pane" &
+        pairs+="$src_pane"$'\t'"${picker_panes[i]}"$'\t'"$start_capture"$'\t'"$end_capture"$'\n'
     done
-    wait
+    tmux setenv -g PICKER_PAIRS "$pairs"
 
     tmux respawn-pane -k -t "$picker_pane_id" \
-        "$CURRENT_DIR/hint_mode.sh \"$last_pane_id\" \"$captures_dir\""
+        "$CURRENT_DIR/hint_mode.sh \"$last_pane_id\""
 }
 
 last_pane_id=$(tmux display -pt':.{last}' '#{pane_id}' 2>/dev/null)
