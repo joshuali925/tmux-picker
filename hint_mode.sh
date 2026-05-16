@@ -12,22 +12,20 @@ picker_pane_id=$TMUX_PANE
 eval "$(tmux show-env -gs PICKER_PAIRS)"
 
 declare -a src_panes picker_panes capture_starts capture_ends
-while IFS=$'\t' read -r src_pane picker_pane start end; do
+declare -A picker_tty_by_id
+while IFS=$'\t' read -r src_pane picker_pane start end tty; do
     [[ -z $src_pane ]] && continue
     src_panes+=("$src_pane")
     picker_panes+=("$picker_pane")
     capture_starts+=("$start")
     capture_ends+=("$end")
+    picker_tty_by_id[$picker_pane]=$tty
     [[ $picker_pane == "$picker_pane_id" ]] && current_pane_id=$src_pane
 done <<< "$PICKER_PAIRS"
 
-# Fetch picker ttys after respawn-pane reassigns picker_pane_id's pty —
-# capturing them in tmux-picker.sh would store the pre-respawn tty, which
-# the user no longer owns (-> EACCES when gawk redirects to it).
-declare -A picker_tty_by_id
-while IFS=$'\t' read -r pid tty; do
-    picker_tty_by_id[$pid]=$tty
-done < <(tmux list-panes -t "$picker_pane_id" -F "#{pane_id}	#{pane_tty}")
+# Own pane's tty changed when respawn-pane reassigned its pty; the stashed
+# tty would EACCES. /dev/tty is our controlling terminal post-respawn.
+picker_tty_by_id[$picker_pane_id]=/dev/tty
 
 declare -A match_by_hint
 
