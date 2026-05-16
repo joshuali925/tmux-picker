@@ -7,7 +7,7 @@ BEGIN {
     user_blacklist = ENVIRON["PICKER_BLACKLIST_PATTERNS"]
     have_blacklist = (user_blacklist != "")
     if (have_blacklist) {
-        blacklist = "(^\x1b\\[[0-9;]{1,9}m|^|[[:space:]:<>)(&#'\"])"user_blacklist"$"
+        blacklist = "(^\x1b\\[[0-9;]+m|^|[[:space:]:<>)(&#'\"])"user_blacklist"$"
     }
 
     hint_format = ENVIRON["PICKER_HINT_FORMAT"]
@@ -116,7 +116,7 @@ function compute_outer_indices(pat,    n, i, c, c2, j, depth, group_idx, in_clas
             # strip embedded color escapes so paste output is clean and the
             # highlight renders contiguously across color resets — most matches
             # don't contain escapes, so skip the gsub via a cheap index() probe.
-            if (index(line_match, "\x1b") > 0) gsub(/\x1b\[[0-9;]{1,9}m/, "", line_match);
+            if (index(line_match, "\x1b") > 0) gsub(/\x1b\[[0-9;]+m/, "", line_match);
 
             idx = match_idx_by_text[line_match]
             if (!idx) {
@@ -130,7 +130,7 @@ function compute_outer_indices(pat,    n, i, c, c2, j, depth, group_idx, in_clas
             # This is mostly needed to keep prompts intact, so fix first ~500 chars only.
             # Skip entirely when pre_match has no escapes — the common case.
             if (length(output_line) < 500 && index(pre_match, "\x1b") > 0) {
-                num_colors = split(pre_match, arr, /\x1b\[[0-9;]{1,9}m/, colors);
+                num_colors = split(pre_match, arr, /\x1b\[[0-9;]+m/, colors);
                 if (num_colors > 1) {
                     # join() in gawk's bundled lib treats "" as a sentinel
                     # for " " (single space) — pass SUBSEP for "no separator"

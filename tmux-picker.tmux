@@ -33,17 +33,18 @@ function array_join() {
 # in the stream); FCS allows escapes inside the body so a path can span color
 # resets between segments. SP-prefixed arms share one ((SP)(body|...)) wrapper
 # so the regex engine has fewer top-level alternations to track per match.
-CS=$'\x1b'"\[[0-9;]{1,9}m"
+# CS bound is `+` (no upper) — terminated by `m`. Earlier `{1,9}` silently
+# stopped matching 24-bit SGR (\x1b[38;2;R;G;Bm = 16 inner chars), and `{1,32}`
+# is measurably slower in gawk's regex engine than `+`.
+CS=$'\x1b'"\[[0-9;]+m"
 START_DELIM="[[:space:]:<>)(&#'\"]"
 SP="($CS|^|$START_DELIM)"
 FCS="([[:alnum:]_.%/~-]|$CS)"
 SP_BODIES=(
-"${FCS}*\.${FCS}+"                                                                                  # filename / dotted path
-"ds-[[:alnum:]_]+"
-"i-[[:alnum:]_]+"
+"${FCS}*[./]${FCS}+"                                                                                # filename or path
+"(ds|i)-[[:alnum:]_]+"
 "[0-9]+:[[:alnum:]_-]+"
 "(https?://|git@|git://|ssh://|ftp://|file://)[^[:space:]]+"
-"${FCS}*/${FCS}+"                                                                                   # path
 "#[0-9a-fA-F]{6}"
 "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"                                      # uuid
 "Qm[[:alnum:]]{44}"                                                                                 # ipfs
