@@ -17,7 +17,7 @@ function init_picker_window() {
         cmd+="${cmd:+ \\; }split-window -d -t $picker_pane_id 'sleep 2147483647'"
     done
     if [[ -n "$source_layout" ]]; then
-        cmd+="${cmd:+ \\; }select-layout -t $picker_window_id ${source_layout@Q}"
+        cmd+="${cmd:+ \\; }select-layout -t $picker_window_id '$source_layout'"
     fi
     if [[ -n "$cmd" ]]; then
         eval "tmux $cmd >/dev/null"

@@ -1,4 +1,4 @@
-@include "join" # gawk 4.1 was released in 2013
+@include "join.awk" # bare "join" only resolves on gawk 4.1+
 
 BEGIN {
     highlight_patterns = ENVIRON["PICKER_PATTERNS"]
