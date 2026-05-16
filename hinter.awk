@@ -124,7 +124,10 @@ FNR == 1 {
             if (length(output_line) < 500 && index(pre_match, "\x1b") > 0) {
                 num_colors = split(pre_match, arr, /\x1b\[[0-9;]{1,9}m/, colors);
                 if (num_colors > 1) {
-                    post_match = join(colors, 1, num_colors - 1, "") post_match;
+                    # join() in gawk's bundled lib treats "" as a sentinel
+                    # for " " (single space) — pass SUBSEP for "no separator"
+                    # so the color escapes concatenate without a stray space.
+                    post_match = join(colors, 1, num_colors - 1, SUBSEP) post_match;
                 }
             }
 
