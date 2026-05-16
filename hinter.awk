@@ -72,12 +72,20 @@ function compute_outer_indices(pat,    n, i, c, c2, j, depth, group_idx, in_clas
     }
 }
 
-FNR == 1 {
-    n_files++
-    file_first_line[n_files] = n_lines + 1
-}
-
 {
+    # File-separator (\x1c) lines mark pane boundaries when all captures arrive
+    # in one stream from a chained `capture-pane \; display-message \; ...`
+    # — one tmux fork instead of N. The sentinel line starts a new file.
+    if (substr($0, 1, 1) == "\x1c") {
+        n_files++
+        file_first_line[n_files] = n_lines + 1
+        next
+    }
+    # First data line opens the first file when no leading sentinel was emitted.
+    if (n_files == 0) {
+        n_files = 1
+        file_first_line[1] = 1
+    }
     # SOH/STX are reserved as placeholder delimiters in line_buffer.
     if (index($0, "\x01") || index($0, "\x02")) gsub(/[\x01\x02]/, "", $0)
     line = $0;
@@ -145,7 +153,7 @@ FNR == 1 {
     # Prefix every line except the first of its pane with a newline. The
     # first emitted line lands at the cursor's home position from \x1b[H so
     # row 1 isn't wasted on a blank.
-    line_buffer[n_lines] = (FNR == 1 ? "" : "\n") (output_line skipped_prefix post_match);
+    line_buffer[n_lines] = (n_lines == file_first_line[n_files] ? "" : "\n") (output_line skipped_prefix post_match);
 }
 
 END {

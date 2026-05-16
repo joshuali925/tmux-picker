@@ -39,17 +39,21 @@ for (( i=0; i<${#src_panes[@]}; i++ )); do
 done
 
 function extract_hints() {
-    local i tty_list="" capture_args=""
+    # Stream all N pane captures through one tmux call, with each capture
+    # prefixed by an FS (\x1c) sentinel line so hinter.awk can demux.
+    # Saves N-1 tmux forks vs. one process substitution per pane.
+    local i tty_list="" tmux_cmd=""
     for (( i=0; i<${#src_panes[@]}; i++ )); do
         tty_list+="${picker_tty_by_id[${picker_panes[i]}]}"$'\n'
-        capture_args+=" <(tmux capture-pane -e -J -p -t ${src_panes[i]} -S ${capture_starts[i]} -E ${capture_ends[i]})"
+        tmux_cmd+="${tmux_cmd:+ \\; }display-message -p $'\\x1c'"
+        tmux_cmd+=" \\; capture-pane -e -J -p -t ${src_panes[i]} -S ${capture_starts[i]} -E ${capture_ends[i]}"
     done
 
     local hint match
     while IFS=: read -r hint match; do
         [[ -z $hint ]] && continue
         match_by_hint[$hint]=$match
-    done < <(eval "TTY_LIST=\$tty_list gawk -f \"\$CURRENT_DIR/hinter.awk\"$capture_args")
+    done < <(eval "tmux $tmux_cmd" | TTY_LIST=$tty_list gawk -f "$CURRENT_DIR/hinter.awk")
 }
 
 function swap_all_panes_and_zoom() {
