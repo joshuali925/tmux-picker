@@ -39,8 +39,10 @@ function prompt_picker_for_window() {
     local -a source_panes picker_panes
     mapfile -t source_panes < <(list_panes_sorted)
     local source_pane_count=${#source_panes[@]}
-    local source_layout
-    source_layout=$(tmux display -p '#{window_layout}')
+    local source_layout pane_was_zoomed
+    IFS=$'\t' read -r source_layout pane_was_zoomed < <(
+        tmux display -p '#{window_layout}	#{?window_zoomed_flag,1,0}'
+    )
 
     local picker_pane_id picker_window_id
     IFS=: read -r picker_pane_id picker_window_id < <(
@@ -91,7 +93,7 @@ function prompt_picker_for_window() {
     tmux setenv -g PICKER_PAIRS "$pairs"
 
     tmux respawn-pane -k -t "$picker_pane_id" \
-        "$CURRENT_DIR/hint_mode.sh \"$last_pane_id\""
+        "$CURRENT_DIR/hint_mode.sh \"$last_pane_id\" \"$pane_was_zoomed\""
 }
 
 { read -r current_pane_id; read -r last_pane_id; } < <(

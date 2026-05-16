@@ -3,12 +3,13 @@
 CURRENT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 last_pane_id=$1
+pane_was_zoomed=$2
 
 # tmux display -p reports the *client's* active pane, which is still the
 # source window at this point — so use $TMUX_PANE for our own pane id.
 picker_pane_id=$TMUX_PANE
 
-eval "$(tmux show-env -gs | grep ^PICKER)"
+eval "$(tmux show-env -gs PICKER_PAIRS)"
 
 declare -a src_panes picker_panes capture_starts capture_ends
 while IFS=$'\t' read -r src_pane picker_pane start end; do
@@ -20,8 +21,6 @@ while IFS=$'\t' read -r src_pane picker_pane start end; do
     [[ $picker_pane == "$picker_pane_id" ]] && current_pane_id=$src_pane
 done <<< "$PICKER_PAIRS"
 
-pane_was_zoomed=$(tmux display -pt "$current_pane_id" '#{?window_zoomed_flag,1,0}')
-
 # Fetch picker ttys after respawn-pane reassigns picker_pane_id's pty —
 # capturing them in tmux-picker.sh would store the pre-respawn tty, which
 # the user no longer owns (-> EACCES when gawk redirects to it).
@@ -32,13 +31,12 @@ done < <(tmux list-panes -t "$picker_pane_id" -F "#{pane_id}	#{pane_tty}")
 
 declare -A match_by_hint
 
-function build_swap_cmd() {
-    local i cmd=""
-    for (( i=0; i<${#src_panes[@]}; i++ )); do
-        cmd+="${cmd:+ \\; }swap-pane -d -s ${src_panes[i]} -t ${picker_panes[i]}"
-    done
-    printf '%s' "$cmd"
-}
+# Build the swap command once — used for both the forward swap and the revert.
+# Per-pair shape doesn't change between the two calls.
+swap_cmd=""
+for (( i=0; i<${#src_panes[@]}; i++ )); do
+    swap_cmd+="${swap_cmd:+ \\; }swap-pane -d -s ${src_panes[i]} -t ${picker_panes[i]}"
+done
 
 function extract_hints() {
     local i tty_list="" capture_args=""
@@ -57,8 +55,7 @@ function extract_hints() {
 function swap_all_panes_and_zoom() {
     # -d keeps the active pane unchanged; without it the loop leaves whichever
     # pair ran last as active, clobbering the user's slot.
-    local cmd
-    cmd=$(build_swap_cmd)
+    local cmd=$swap_cmd
     [[ $pane_was_zoomed == "1" ]] && cmd+=" \\; resize-pane -Z -t $picker_pane_id"
     eval "tmux $cmd"
 }
@@ -69,8 +66,7 @@ input=''
 result=''
 
 function revert_to_original_panes() {
-    local cmd
-    cmd=$(build_swap_cmd)
+    local cmd=$swap_cmd
     if [[ -n "$last_pane_id" ]]; then
         cmd+=" \\; select-pane -t $last_pane_id \\; select-pane -t $current_pane_id"
     fi
