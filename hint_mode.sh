@@ -151,6 +151,7 @@ while read -rsn1 char; do
         input="$input$char"
     fi
 
+    [[ -z $input ]] && continue
     result=${match_by_hint[${input,,}]}
 
     if [[ -z $result ]]; then

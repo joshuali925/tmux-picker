@@ -139,7 +139,10 @@ FNR == 1 {
     }
 
     n_lines++
-    line_buffer[n_lines] = "\n" (output_line skipped_prefix post_match);
+    # Prefix every line except the first of its pane with a newline. The
+    # first emitted line lands at the cursor's home position from \x1b[H so
+    # row 1 isn't wasted on a blank.
+    line_buffer[n_lines] = (FNR == 1 ? "" : "\n") (output_line skipped_prefix post_match);
 }
 
 END {
