@@ -94,6 +94,7 @@ function prompt_picker_for_window() {
         "$CURRENT_DIR/hint_mode.sh \"$last_pane_id\""
 }
 
-last_pane_id=$(tmux display -pt':.{last}' '#{pane_id}' 2>/dev/null)
-current_pane_id=$(tmux display -p '#{pane_id}')
+{ read -r current_pane_id; read -r last_pane_id; } < <(
+    tmux display -p '#{pane_id}' \; display -pt':.{last}' '#{pane_id}' 2>/dev/null
+)
 prompt_picker_for_window "$current_pane_id" "$last_pane_id" >/dev/null

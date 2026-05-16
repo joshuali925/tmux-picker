@@ -2,7 +2,13 @@
 
 BEGIN {
     highlight_patterns = ENVIRON["PICKER_PATTERNS"]
-    blacklist = "(^\x1b\\[[0-9;]{1,9}m|^|[[:space:]:<>)(&#'\"])"ENVIRON["PICKER_BLACKLIST_PATTERNS"]"$"
+    # Only build the blacklist regex when user actually configured one — the
+    # check runs on every match and is otherwise pure overhead.
+    user_blacklist = ENVIRON["PICKER_BLACKLIST_PATTERNS"]
+    have_blacklist = (user_blacklist != "")
+    if (have_blacklist) {
+        blacklist = "(^\x1b\\[[0-9;]{1,9}m|^|[[:space:]:<>)(&#'\"])"user_blacklist"$"
+    }
 
     hint_format = ENVIRON["PICKER_HINT_FORMAT"]
     hint_format_nocolor = ENVIRON["PICKER_HINT_FORMAT_NOCOLOR"]
@@ -84,7 +90,7 @@ FNR == 1 {
         post_match = substr(line, RSTART + RLENGTH);
         line_match = matches[0]
 
-        if (line_match !~ blacklist) {
+        if (!have_blacklist || line_match !~ blacklist) {
             # Top-level alternation is ((prefix)body); only the matched arm
             # populates capture entries. Walk the precomputed outer indices
             # and pick the first one that participated in this match.
@@ -100,8 +106,9 @@ FNR == 1 {
             }
 
             # strip embedded color escapes so paste output is clean and the
-            # highlight renders contiguously across color resets
-            gsub(/\x1b\[[0-9;]{1,9}m/, "", line_match);
+            # highlight renders contiguously across color resets — most matches
+            # don't contain escapes, so skip the gsub via a cheap index() probe.
+            if (index(line_match, "\x1b") > 0) gsub(/\x1b\[[0-9;]{1,9}m/, "", line_match);
 
             idx = match_idx_by_text[line_match]
             if (!idx) {
@@ -171,21 +178,22 @@ END {
 
     for (fi = 1; fi <= n_files; fi++) {
         out = tty_by_idx[fi]
-        # Clear the picker pane's prior contents before painting hints.
-        printf "\x1b[2J\x1b[H" > out
+        # Build the entire pane payload first, then write in one printf —
+        # avoids ~tens of thousands of tiny writes to a tty.
+        pane_out = "\x1b[2J\x1b[H"
         start = file_first_line[fi]
         end = (fi < n_files) ? file_first_line[fi+1] - 1 : n_lines
         for (li = start; li <= end; li++) {
             buf = line_buffer[li]
             while ((p = index(buf, "\x01")) > 0) {
-                printf "%s", substr(buf, 1, p - 1) > out
                 rest = substr(buf, p + 1)
                 q = index(rest, "\x02")
-                printf "%s", rendered_by_idx[substr(rest, 1, q - 1) + 0] > out
+                pane_out = pane_out substr(buf, 1, p - 1) rendered_by_idx[substr(rest, 1, q - 1) + 0]
                 buf = substr(rest, q + 1)
             }
-            printf "%s", buf > out
+            pane_out = pane_out buf
         }
+        printf "%s", pane_out > out
         close(out)
     }
 

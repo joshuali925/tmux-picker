@@ -30,31 +30,35 @@ function array_join() {
 
 # Each pattern is ((prefix)body); hinter.awk strips the prefix from the hint
 # text. SP anchors matches outside ANSI escapes (capture-pane -e leaves them
-# in the stream); FCS/TCS allow escapes inside the body so a path can span
-# color resets between segments.
+# in the stream); FCS allows escapes inside the body so a path can span color
+# resets between segments. SP-prefixed arms share one ((SP)(body|...)) wrapper
+# so the regex engine has fewer top-level alternations to track per match.
 CS=$'\x1b'"\[[0-9;]{1,9}m"
 START_DELIM="[[:space:]:<>)(&#'\"]"
 SP="($CS|^|$START_DELIM)"
 FCS="([[:alnum:]_.%/~-]|$CS)"
+SP_BODIES=(
+"${FCS}*\.${FCS}+"                                                                                  # filename / dotted path
+"ds-[[:alnum:]_]+"
+"i-[[:alnum:]_]+"
+"[0-9]+:[[:alnum:]_-]+"
+"(https?://|git@|git://|ssh://|ftp://|file://)[^[:space:]]+"
+"${FCS}*/${FCS}+"                                                                                   # path
+"#[0-9a-fA-F]{6}"
+"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"                                      # uuid
+"Qm[[:alnum:]]{44}"                                                                                 # ipfs
+"[0-9a-f]{7,40}"                                                                                    # sha
+"[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}"                                                    # ipv4
+"[A-Fa-f0-9:]+:+[A-Fa-f0-9:]+[%[:alnum:]_]+"                                                        # ipv6
+"0x[0-9a-fA-F]+"
+"[0-9]{4,}"
+)
 PATTERNS_LIST=(
-"(${SP}${FCS}*\.${FCS}+)"                                                                           # filename / dotted path
-"(${SP}ds-[[:alnum:]_]+)"
-"(${SP}i-[[:alnum:]_]+)"
-"(${SP}[0-9]+:[[:alnum:]_-]+)"
+"(${SP}($(array_join "|" "${SP_BODIES[@]}")))"
 "((\[[^]]*\]\()[^)]+)"                                                                              # markdown_url
-"(${SP}(https?://|git@|git://|ssh://|ftp://|file://)[^[:space:]]+)"
 "((--- a/)[^[:space:]]+)"
 "((\+\+\+ b/)[^[:space:]]+)"
 "((sha256:)[0-9a-f]{64})"
-"(${SP}${FCS}*/${FCS}+)"                                                                            # path
-"(${SP}#[0-9a-fA-F]{6})"
-"(${SP}[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"                               # uuid
-"(${SP}Qm[[:alnum:]]{44})"                                                                          # ipfs
-"(${SP}[0-9a-f]{7,40})"                                                                             # sha
-"(${SP}[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})"                                             # ipv4
-"(${SP}[A-Fa-f0-9:]+:+[A-Fa-f0-9:]+[%[:alnum:]_]+)"                                                 # ipv6
-"(${SP}0x[0-9a-fA-F]+)"
-"(${SP}[0-9]{4,})"
 )
 
 BLACKLIST=()
