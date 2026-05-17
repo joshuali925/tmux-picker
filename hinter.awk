@@ -27,6 +27,24 @@ BEGIN {
     # so per-match prefix lookup walks a small fixed list instead of every
     # key in matches[].
     compute_outer_indices(highlight_patterns)
+
+    # Wide (2-cell) char regex covers the common ranges where stripping a
+    # character to make room for a hint label would otherwise visually short
+    # the line: CJK, Hangul, Hiragana/Katakana, fullwidth forms, emoji.
+    # Used in the END block to keep cell-width parity across hint substitution.
+    wide_re = sprintf("[%c-%c%c-%c%c-%c%c-%c%c-%c%c-%c%c-%c%c-%c%c-%c%c-%c%c-%c%c-%c]", \
+        0x1100, 0x115F, \
+        0x2E80, 0x303E, \
+        0x3041, 0x33FF, \
+        0x3400, 0x4DBF, \
+        0x4E00, 0x9FFF, \
+        0xA000, 0xA4CF, \
+        0xAC00, 0xD7A3, \
+        0xF900, 0xFAFF, \
+        0xFE30, 0xFE4F, \
+        0xFF00, 0xFF60, \
+        0xFFE0, 0xFFE6, \
+        0x1F300, 0x1FAFF)
 }
 
 function compute_outer_indices(pat,    n, i, c, c2, j, depth, group_idx, in_class) {
@@ -185,8 +203,26 @@ END {
         hint = HINTS[i]
         text = unique_match_text[i]
         hint_lookup = hint_lookup hint ":" text "\n"
-        hint_len = length(hint) + hint_format_len
-        truncated = substr(text, hint_len + 1, length(text) - hint_len)
+        hint_cells = length(hint) + hint_format_len
+        # Consume chars by display cell, not codepoint count: a single CJK
+        # glyph occupies 2 cells, so naively dropping `hint_cells` chars
+        # would short the line by 1 cell per wide char and shift the tail
+        # leftward. Pad with a leading space when a wide char straddles the
+        # boundary so column alignment is preserved.
+        cells = 0
+        cut = 0
+        n = length(text)
+        pad = ""
+        while (cells < hint_cells && cut < n) {
+            cut++
+            if (substr(text, cut, 1) ~ wide_re) {
+                cells += 2
+                if (cells > hint_cells) pad = " "
+            } else {
+                cells += 1
+            }
+        }
+        truncated = pad substr(text, cut + 1)
         rendered_by_idx[i] = sprintf(compound_format, hint, truncated)
     }
 
