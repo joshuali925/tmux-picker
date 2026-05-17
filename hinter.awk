@@ -198,9 +198,29 @@ END {
         split("ss sa sd sf sj sk sl se sw sc sm sv sp sg sh sr su as aa ad af aj ak al ae aw ac am av ap ag ah ar au ds da dd df dj dk dl de dw dc dm dv dp dg dh dr du fs fa fd ff fj fk fl fe fw fc fm fv fp fg fh fr fu js ja jd jf jj jk jl je jw jc jm jv jp jg jh jr ju ks ka kd kf kj kk kl ke kw kc km kv kp kg kh kr ku ls la ld lf lj lk ll le lw lc lm lv lp lg lh lr lu es ea ed ef ej ek el ee ew ec em ev ep eg eh er eu ws wa wd wf wj wk wl we ww wc wm wv wp wg wh wr wu cs ca cd cf cj ck cl ce cw cc cm cv cp cg ch cr cu ms ma md mf mj mk ml me mw mc mm mv mp mg mh mr mu vs va vd vf vj vk vl ve vw vc vm vv vp vg vh vr vu ps pa pd pf pj pk pl pe pw pc pm pv pp pg ph pr pu gs ga gd gf gj gk gl ge gw gc gm gv gp gg gh gr gu hs ha hd hf hj hk hls hla hld hlf hlj hlk hll hle hes hea hed hef hej hek hel hee hew hec hem hev hep heg heh her heu hws hwa hwd hwf hwj hwk hwl hwe hww hwc hwm hwv hwp hwg hwh hwr hwu hcs hca hcd hcf hcj hck hcl hce hcw hcc hcm hcv hcp hcg hch hcr hcu hms hma hmd hmf hmj hmk hml hme hmw hmc hmm hmv hmp hmg hmh hmr hmu hvs hva hvd hvf hvj hvk hvl hve hvw hvc hvm hvv hvp hvg hvh hvr hvu hps hpa hpd hpf hpj hpk hpl hpe hpw hpc hpm hpv hpp hpg hph hpr hpu hgs hga hgd hgf hgj hgk hgl hge hgw hgc hgm hgv hgp hgg hgh hgr hgu hhs hha hhd hhf hhj hhk hhl hhe hhw hhc hhm hhv hhp hhg hhh hhr hhu hrs hra hrd hrf hrj hrk hrl hre hrw hrc hrm hrv hrp hrg hrh hrr hru hus hua hud huf huj huk hul hue huw huc hum huv hup hug huh hur huu rss rsa rsd rsf rsj rsk rsl rse rsw rsc rsm rsv rsp rsg rsh rsr rsu ras raa rad raf raj rak ral rae raw rac ram rav rap rag rah rar rau rds rda rdd rdf rdj rdk rdl rde rdw rdc rdm rdv rdp rdg rdh rdr rdu rfs rfa rfd rff rfj rfk rfl rfe rfw rfc rfm rfv rfp rfg rfh rfr rfu rjs rja rjd rjf rjj rjk rjl rje rjw rjc rjm rjv rjp rjg rjh rjr rju rks rka rkd rkf rkj rkk rkl rke rkw rkc rkm rkv rkp rkg rkh rkr rku rls rla rld rlf rlj rlk rll rle rlw rlc rlm rlv rlp rlg rlh rlr rlu res rea red ref rej rek rel ree rew rec rem rev rep reg reh rer reu rws rwa rwd rwf rwj rwk rwl rwe rww rwc rwm rwv rwp rwg rwh rwr rwu rcs rca rcd rcf rcj rck rcl rce rcw rcc rcm rcv rcp rcg rch rcr rcu rms rma rmd rmf rmj rmk rml rme rmw rmc rmm rmv rmp rmg rmh rmr rmu rvs rva rvd rvf rvj rvk rvl rve rvw rvc rvm rvv rvp rvg rvh rvr rvu rps rpa rpd rpf rpj rpk rpl rpe rpw rpc rpm rpv rpp rpg rph rpr rpu rgs rga rgd rgf rgj rgk rgl rge rgw rgc rgm rgv rgp rgg rgh rgr rgu rhs rha rhd rhf rhj rhk rhl rhe rhw rhc rhm rhv rhp rhg rhh rhr rhu rrs rra rrd rrf rrj rrk rrl rre rrw rrc rrm rrv rrp rrg rrh rrr rru rus rua rud ruf ruj ruk rul rue ruw ruc rum ruv rup rug ruh rur ruu uss usa usd usf usj usk usl use usw usc usm usv usp usg ush usr usu uas uaa uad uaf uaj uak ual uae uaw uac uam uav uap uag uah uar uau uds uda udd udf udj udk udl ude udw udc udm udv udp udg udh udr udu ufs ufa ufd uff ufj ufk ufl ufe ufw ufc ufm ufv ufp ufg ufh ufr ufu ujs uja ujd ujf ujj ujk ujl uje ujw ujc ujm ujv ujp ujg ujh ujr uju uks uka ukd ukf ukj ukk ukl uke ukw ukc ukm ukv ukp ukg ukh ukr uku uls ula uld ulf ulj ulk ull ule ulw ulc ulm ulv ulp ulg ulh ulr ulu ues uea ued uef uej uek uel uee uew uec uem uev uep ueg ueh uer ueu uws uwa uwd uwf uwj uwk uwl uwe uww uwc uwm uwv uwp uwg uwh uwr uwu ucs uca ucd ucf ucj uck ucl uce ucw ucc ucm ucv ucp ucg uch ucr ucu ums uma umd umf umj umk uml ume umw umc umm umv ump umg umh umr umu uvs uva uvd uvf uvj uvk uvl uve uvw uvc uvm uvv uvp uvg uvh uvr uvu ups upa upd upf upj upk upl upe upw upc upm upv upp upg uph upr upu ugs uga ugd ugf ugj ugk ugl uge ugw ugc ugm ugv ugp ugg ugh ugr ugu uhs uha uhd uhf uhj uhk uhl uhe uhw uhc uhm uhv uhp uhg uhh uhr uhu urs ura urd urf urj urk url ure urw urc urm urv urp urg urh urr uru uus uua uud uuf uuj uuk uul uue uuw uuc uum uuv uup uug uuh uur uuu", HINTS);
     }
 
-    hint_lookup = ""
+    # Rank unique matches by (category, -length, original_idx) so the limited
+    # single-letter hint pool lands on the tokens that hurt most to retype.
+    # Tier 2 (low priority): short digit runs and hex colors — both trivial to
+    # retype. Tier 1: everything else. Length dominates within a tier; original
+    # encounter order breaks length ties (stable).
     for (i = 1; i <= n_unique; i++) {
-        hint = HINTS[i]
+        text = unique_match_text[i]
+        text_len = length(text)
+        tier = ((text ~ /^[0-9]+$/ && text_len <= 6) || text ~ /^#[0-9a-fA-F]{6}$/) ? 2 : 1
+        sort_key[i] = sprintf("%d|%06d|%06d", tier, 999999 - text_len, i)
+    }
+    PROCINFO["sorted_in"] = "@val_str_asc"
+    rank = 0
+    for (i in sort_key) {
+        rank++
+        orig_by_rank[rank] = i + 0
+    }
+    PROCINFO["sorted_in"] = ""
+
+    hint_lookup = ""
+    for (rank = 1; rank <= n_unique; rank++) {
+        i = orig_by_rank[rank]
+        hint = HINTS[rank]
         text = unique_match_text[i]
         hint_lookup = hint_lookup hint ":" text "\n"
         hint_cells = length(hint) + hint_format_len
@@ -225,6 +245,8 @@ END {
         truncated = pad substr(text, cut + 1)
         rendered_by_idx[i] = sprintf(compound_format, hint, truncated)
     }
+    delete orig_by_rank
+    delete sort_key
 
     for (fi = 1; fi <= n_files; fi++) {
         out = tty_by_idx[fi]
