@@ -108,70 +108,107 @@ function compute_outer_indices(pat,    n, i, c, c2, j, depth, group_idx, in_clas
     if (index($0, "\x01") || index($0, "\x02")) gsub(/[\x01\x02]/, "", $0)
     line = $0;
     output_line = "";
-    post_match = line;
     skipped_prefix = "";
 
-    while (match(line, highlight_patterns, matches)) {
-        pre_match = skipped_prefix substr(line, 1, RSTART - 1);
-        post_match = substr(line, RSTART + RLENGTH);
-        line_match = matches[0]
-
-        if (!have_blacklist || line_match !~ blacklist) {
-            # Top-level alternation is ((prefix)body); only the matched arm
-            # populates capture entries. Walk the precomputed outer indices
-            # and pick the first one that participated in this match.
-            outer_idx = 0
-            for (k = 1; k <= n_outer; k++) {
-                oi = outer_indices[k]
-                if (matches[oi, "start"] > 0) { outer_idx = oi; break }
+    # Match against a SGR-stripped copy and remap positions back, so patterns
+    # work through gradient/per-character coloring (e.g. spinner output that
+    # wraps every char in its own SGR escape). Plain lines short-circuit to
+    # the original line untouched.
+    if (index(line, "\x1b") == 0) {
+        stripped = line
+        n_pieces = 1
+        piece_orig_start[1] = 1
+        piece_stripped_start[1] = 1
+    } else {
+        np = split(line, parts, /\x1b\[[0-9;]+m/, seps)
+        stripped = ""
+        n_pieces = 0
+        op = 1
+        sp = 1
+        for (i = 1; i <= np; i++) {
+            pl = length(parts[i])
+            if (pl > 0) {
+                n_pieces++
+                piece_orig_start[n_pieces] = op
+                piece_stripped_start[n_pieces] = sp
+                stripped = stripped parts[i]
+                sp += pl
             }
-            if (outer_idx > 0) {
-                prefix_idx = outer_idx + 1
-                line_match = substr(line_match, 1 + matches[prefix_idx, "length"])
-                pre_match = pre_match matches[prefix_idx]
+            op += pl + (i < np ? length(seps[i]) : 0)
+        }
+        piece_stripped_start[n_pieces + 1] = sp
+    }
+
+    # Forward-walking cursor over pieces — matches advance monotonically.
+    cur_piece = 1
+    pos = 0  # already-consumed stripped chars
+
+    while (match(substr(stripped, pos + 1), highlight_patterns, matches)) {
+        s_start = pos + RSTART
+        s_end = pos + RSTART + RLENGTH - 1
+
+        # Top-level alternation is ((prefix)body); strip the matched arm's
+        # prefix from the hint text. Walk the precomputed outer indices and
+        # pick the first one that participated in this match.
+        prefix_len = 0
+        for (k = 1; k <= n_outer; k++) {
+            oi = outer_indices[k]
+            if (matches[oi, "start"] > 0) {
+                prefix_len = matches[oi + 1, "length"]
+                break
             }
+        }
+        body_start_s = s_start + prefix_len
 
-            # strip embedded color escapes so paste output is clean and the
-            # highlight renders contiguously across color resets — most matches
-            # don't contain escapes, so skip the gsub via a cheap index() probe.
-            if (index(line_match, "\x1b") > 0) gsub(/\x1b\[[0-9;]+m/, "", line_match);
+        while (cur_piece < n_pieces && piece_stripped_start[cur_piece + 1] <= body_start_s) cur_piece++
+        body_start_o = piece_orig_start[cur_piece] + (body_start_s - piece_stripped_start[cur_piece])
+        while (cur_piece < n_pieces && piece_stripped_start[cur_piece + 1] <= s_end + 1) cur_piece++
+        body_end_o = piece_orig_start[cur_piece] + (s_end + 1 - piece_stripped_start[cur_piece]) - 1
 
-            idx = match_idx_by_text[line_match]
+        last_o = (pos > 0) ? prev_end_o : 0
+        pre_match = skipped_prefix substr(line, last_o + 1, body_start_o - 1 - last_o)
+        # body is the stripped match text; embedded escapes are absorbed by
+        # the hint replacement, so paste output stays clean.
+        body = substr(stripped, body_start_s, s_end - body_start_s + 1)
+
+        if (!have_blacklist || body !~ blacklist) {
+            idx = match_idx_by_text[body]
             if (!idx) {
                 n_unique++
                 idx = n_unique
-                match_idx_by_text[line_match] = idx
-                unique_match_text[n_unique] = line_match
+                match_idx_by_text[body] = idx
+                unique_match_text[n_unique] = body
             }
 
-            # Fix colors broken by the hints highlighting.
-            # This is mostly needed to keep prompts intact, so fix first ~500 chars only.
-            # Skip entirely when pre_match has no escapes — the common case.
+            # Carry forward any SGR state from the prefix so subsequent text
+            # keeps its color. Mostly matters for prompts; cap at ~500 chars.
+            color_carry = ""
             if (length(output_line) < 500 && index(pre_match, "\x1b") > 0) {
                 num_colors = split(pre_match, arr, /\x1b\[[0-9;]+m/, colors);
                 if (num_colors > 1) {
-                    # join() in gawk's bundled lib treats "" as a sentinel
-                    # for " " (single space) — pass SUBSEP for "no separator"
-                    # so the color escapes concatenate without a stray space.
-                    post_match = join(colors, 1, num_colors - 1, SUBSEP) post_match;
+                    # join() treats "" as a sentinel for " "; pass SUBSEP for
+                    # empty separator so the escapes concatenate cleanly.
+                    color_carry = join(colors, 1, num_colors - 1, SUBSEP)
                 }
             }
 
             # Defer rendering: store match index inline; resolved at END once
             # the hint pool is chosen based on total unique-match count.
-            output_line = output_line pre_match "\x01" idx "\x02";
+            output_line = output_line pre_match "\x01" idx "\x02" color_carry;
             skipped_prefix = "";
         } else {
-            skipped_prefix = pre_match line_match; # we need it only to fix colors
+            skipped_prefix = skipped_prefix substr(line, last_o + 1, body_end_o - last_o)
         }
-        line = post_match;
+        prev_end_o = body_end_o
+        pos = s_end
     }
 
+    tail_o = (pos > 0) ? prev_end_o : 0
     n_lines++
     # Prefix every line except the first of its pane with a newline. The
     # first emitted line lands at the cursor's home position from \x1b[H so
     # row 1 isn't wasted on a blank.
-    line_buffer[n_lines] = (n_lines == file_first_line[n_files] ? "" : "\n") (output_line skipped_prefix post_match);
+    line_buffer[n_lines] = (n_lines == file_first_line[n_files] ? "" : "\n") (output_line skipped_prefix substr(line, tail_o + 1));
 }
 
 END {
