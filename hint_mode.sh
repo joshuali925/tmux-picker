@@ -8,10 +8,8 @@ picker_session=$3
 
 picker_pane_id=$TMUX_PANE
 
-# Block until the parent script finishes setup and signals via `wait-for -S`.
-# Our bash startup overlaps with the parent's IPC work (list-panes, splits,
-# alignment swap), keeping respawn-pane's bash-fork cost off the critical
-# path. tmux queues signals — order is safe.
+# Wait for parent to populate PICKER_PAIRS and signal. Our bash startup runs
+# in parallel with parent's IPC; tmux queues the signal, so order is safe.
 tmux wait-for "$picker_session"
 
 eval "$(tmux show-env -gs PICKER_PAIRS)"

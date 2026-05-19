@@ -1,12 +1,5 @@
 #!/usr/bin/env bash
-# Defaults for picker config. Sourced by tmux-picker.tmux (for PICKER_KEY at
-# bind-time) and by hint_mode.sh (for gawk's ENVIRON). Use `: ${VAR:=...}` so
-# users can override by setting the var in their .tmux.conf BEFORE this file
-# is sourced — typically by exporting it in their environment.
-
-function _picker_join() {
-    local IFS="$1"; shift; echo "$*";
-}
+# Defaults — users override by setting the var before tmux-picker.tmux runs.
 
 # "-n M-/" for Alt-/ without prefix; "f" for prefix-F.
 : ${PICKER_KEY:="-n M-/"}
@@ -39,13 +32,13 @@ if [[ -z ${PICKER_PATTERNS:-} ]]; then
     "[0-9]{4,}"
     )
     _PATTERNS_LIST=(
-    "(${_SP}($(_picker_join "|" "${_SP_BODIES[@]}")))"
+    "(${_SP}($(IFS='|'; echo "${_SP_BODIES[*]}")))"
     "((\[[^]]*\]\()[^)]+)"                                                                              # markdown_url
     "((--- a/)[^[:space:]]+)"
     "((\+\+\+ b/)[^[:space:]]+)"
     "((sha256:)[0-9a-f]{64})"
     )
-    PICKER_PATTERNS=$(_picker_join "|" "${_PATTERNS_LIST[@]}")
+    PICKER_PATTERNS=$(IFS='|'; echo "${_PATTERNS_LIST[*]}")
     unset _CS _START_DELIM _SP _FCS _SP_BODIES _PATTERNS_LIST
 fi
 

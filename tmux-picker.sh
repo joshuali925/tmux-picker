@@ -9,23 +9,16 @@ function init_picker_window() {
     local pane_was_zoomed=$4
     local source_window_name=$5
 
-    # Picker window lives in a detached side session so its name never appears
-    # in the source session's status bar — the user sees no [picker] entry, no
-    # window-list shift, no status flash. Same client (active session) keeps
-    # the visible source window; we only swap *panes* across, not windows.
-    # The session is named with our pid so concurrent invocations don't clash.
+    # Detached side session so the picker window never shows in the source
+    # session's status bar. Pid-suffixed name avoids concurrent-run collision.
     local picker_session="picker-$$"
 
-    # The active picker pane runs hint_mode.sh directly from new-session,
-    # NOT a sleep + later respawn-pane. Saves ~12 ms (the cost of tmux's
-    # respawn-pane bookkeeping + bash re-fork). hint_mode.sh blocks on
-    # `tmux wait-for $picker_session` until the parent finishes setup and
-    # signals via `wait-for -S`; tmux queues the signal so order is safe.
+    # Launch hint_mode.sh directly (not via sleep + later respawn-pane) so its
+    # bash startup overlaps with parent IPC; it blocks on `tmux wait-for` until
+    # the parent has populated PICKER_PAIRS and calls `wait-for -S`.
     local hint_cmd="exec '$CURRENT_DIR/hint_mode.sh' '$last_pane_id' '$pane_was_zoomed' '$picker_session'"
-    # Name the picker window after the source window so if any tmux machinery
-    # ever surfaces it (e.g. user lists sessions), it doesn't show "bash".
-    # -n alone isn't enough because automatic-rename (default on) would
-    # overwrite it once bash starts; the explicit set-option below pins it.
+    # -n names the window after the source window; automatic-rename would
+    # overwrite it once bash starts, so the set-option below pins it.
     local picker_ids=$(tmux new-session -d -s "$picker_session" -n "$source_window_name" -F "#{pane_id}:#{window_id}" -P -x 200 -y 80 "$hint_cmd")
     local picker_pane_id=${picker_ids%%:*}
     local picker_window_id=${picker_ids#*:}
