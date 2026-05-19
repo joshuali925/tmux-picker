@@ -4,17 +4,15 @@ CURRENT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 last_pane_id=$1
 pane_was_zoomed=$2
-PICKER_SESSION=$3  # passed directly so we know the wait-for channel name
+picker_session=$3
 
-# tmux display -p reports the *client's* active pane, which is still the
-# source window at this point — so use $TMUX_PANE for our own pane id.
 picker_pane_id=$TMUX_PANE
 
 # Block until the parent script finishes setup and signals via `wait-for -S`.
-# The bash startup of this script overlaps with the parent's tmux IPC work
-# (list-panes, splits, alignment swap), so we save respawn-pane's bash-fork
-# cost from the critical path. tmux queues signals — order is safe.
-tmux wait-for "$PICKER_SESSION"
+# Our bash startup overlaps with the parent's IPC work (list-panes, splits,
+# alignment swap), keeping respawn-pane's bash-fork cost off the critical
+# path. tmux queues signals — order is safe.
+tmux wait-for "$picker_session"
 
 eval "$(tmux show-env -gs PICKER_PAIRS)"
 
@@ -29,10 +27,6 @@ while IFS=$'\t' read -r src_pane picker_pane start end tty; do
     picker_tty_by_id[$picker_pane]=$tty
     [[ $picker_pane == "$picker_pane_id" ]] && current_pane_id=$src_pane
 done <<< "$PICKER_PAIRS"
-
-# Own pane's tty changed when respawn-pane reassigned its pty; the stashed
-# tty would EACCES. /dev/tty is our controlling terminal post-respawn.
-picker_tty_by_id[$picker_pane_id]=/dev/tty
 
 declare -A match_by_hint
 
@@ -91,8 +85,7 @@ function handle_exit() {
     fi
 
     # Kill the side session — this also tears down its window and our pane.
-    # PICKER_SESSION is the dedicated session created by tmux-picker.sh.
-    tmux setenv -gu PICKER_PAIRS \; setenv -gu PICKER_SESSION \; kill-session -t "$PICKER_SESSION"
+    tmux setenv -gu PICKER_PAIRS \; kill-session -t "$picker_session"
 }
 
 

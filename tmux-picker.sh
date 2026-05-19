@@ -39,8 +39,6 @@ function init_picker_window() {
     fi
     eval "tmux $cmd >/dev/null"
 
-    # Stash the side-session name so hint_mode.sh can kill it on exit (instead
-    # of kill-window, which would leave an orphaned empty session around).
     echo "$picker_ids:$picker_session"
 }
 
@@ -101,8 +99,7 @@ function prompt_picker_for_window() {
     )
 
     # Picker window: collect ordered ids and ttys here. Stashing ttys upstream
-    # spares hint_mode.sh a tmux list-panes fork after respawn. The own pane's
-    # tty changes on respawn — hint_mode.sh substitutes /dev/tty for that one.
+    # spares hint_mode.sh a tmux list-panes fork.
     local -a picker_panes
     declare -A picker_tty
     local _pid _tty
@@ -133,8 +130,7 @@ function prompt_picker_for_window() {
     fi
 
     # Stash one row per pane in tmux env: src_pane / picker_pane / capture
-    # start / capture end / picker_tty. hint_mode.sh writes hint output to
-    # picker_tty (own pane via /dev/tty since respawn changes its tty).
+    # start / capture end / picker_tty.
     local pairs="" src_pane start_capture end_capture
     for (( i=0; i<source_pane_count; i++ )); do
         src_pane=${source_panes[i]}
@@ -147,12 +143,8 @@ function prompt_picker_for_window() {
         fi
         pairs+="$src_pane"$'\t'"${picker_panes[i]}"$'\t'"$start_capture"$'\t'"$end_capture"$'\t'"${picker_tty[${picker_panes[i]}]}"$'\n'
     done
-    # Set env then signal the waiting hint_mode.sh — one tmux call. No more
-    # respawn-pane: hint_mode.sh was launched as the picker session's initial
-    # command (see init_picker_window) and is currently blocked on wait-for.
-    tmux setenv -g PICKER_PAIRS "$pairs" \
-        \; setenv -g PICKER_SESSION "$picker_session" \
-        \; wait-for -S "$picker_session"
+    # Hand pairs to the waiting hint_mode.sh and unblock it — one tmux call.
+    tmux setenv -g PICKER_PAIRS "$pairs" \; wait-for -S "$picker_session"
 }
 
 {
