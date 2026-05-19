@@ -5,6 +5,8 @@ CURRENT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 function init_picker_window() {
     local source_pane_count=$1
     local source_layout=$2
+    local last_pane_id=$3
+    local pane_was_zoomed=$4
 
     # Picker window lives in a detached side session so its name never appears
     # in the source session's status bar — the user sees no [picker] entry, no
@@ -12,7 +14,14 @@ function init_picker_window() {
     # the visible source window; we only swap *panes* across, not windows.
     # The session is named with our pid so concurrent invocations don't clash.
     local picker_session="picker-$$"
-    local picker_ids=$(tmux new-session -d -s "$picker_session" -F "#{pane_id}:#{window_id}" -P -x 200 -y 80 'sleep 2147483647')
+
+    # The active picker pane runs hint_mode.sh directly from new-session,
+    # NOT a sleep + later respawn-pane. Saves ~12 ms (the cost of tmux's
+    # respawn-pane bookkeeping + bash re-fork). hint_mode.sh blocks on
+    # `tmux wait-for $picker_session` until the parent finishes setup and
+    # signals via `wait-for -S`; tmux queues the signal so order is safe.
+    local hint_cmd="exec '$CURRENT_DIR/hint_mode.sh' '$last_pane_id' '$pane_was_zoomed' '$picker_session'"
+    local picker_ids=$(tmux new-session -d -s "$picker_session" -F "#{pane_id}:#{window_id}" -P -x 200 -y 80 "$hint_cmd")
     local picker_pane_id=${picker_ids%%:*}
     local picker_window_id=${picker_ids#*:}
 
@@ -84,7 +93,7 @@ function prompt_picker_for_window() {
 
     local picker_pane_id picker_window_id picker_session
     IFS=: read -r picker_pane_id picker_window_id picker_session < <(
-        init_picker_window "$source_pane_count" "$source_layout"
+        init_picker_window "$source_pane_count" "$source_layout" "$last_pane_id" "$pane_was_zoomed"
     )
 
     # Picker window: collect ordered ids and ttys here. Stashing ttys upstream
@@ -134,10 +143,12 @@ function prompt_picker_for_window() {
         fi
         pairs+="$src_pane"$'\t'"${picker_panes[i]}"$'\t'"$start_capture"$'\t'"$end_capture"$'\t'"${picker_tty[${picker_panes[i]}]}"$'\n'
     done
+    # Set env then signal the waiting hint_mode.sh — one tmux call. No more
+    # respawn-pane: hint_mode.sh was launched as the picker session's initial
+    # command (see init_picker_window) and is currently blocked on wait-for.
     tmux setenv -g PICKER_PAIRS "$pairs" \
         \; setenv -g PICKER_SESSION "$picker_session" \
-        \; respawn-pane -k -t "$picker_pane_id" \
-            "$CURRENT_DIR/hint_mode.sh \"$last_pane_id\" \"$pane_was_zoomed\""
+        \; wait-for -S "$picker_session"
 }
 
 {

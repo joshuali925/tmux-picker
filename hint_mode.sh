@@ -4,13 +4,19 @@ CURRENT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 last_pane_id=$1
 pane_was_zoomed=$2
+PICKER_SESSION=$3  # passed directly so we know the wait-for channel name
 
 # tmux display -p reports the *client's* active pane, which is still the
 # source window at this point — so use $TMUX_PANE for our own pane id.
 picker_pane_id=$TMUX_PANE
 
+# Block until the parent script finishes setup and signals via `wait-for -S`.
+# The bash startup of this script overlaps with the parent's tmux IPC work
+# (list-panes, splits, alignment swap), so we save respawn-pane's bash-fork
+# cost from the critical path. tmux queues signals — order is safe.
+tmux wait-for "$PICKER_SESSION"
+
 eval "$(tmux show-env -gs PICKER_PAIRS)"
-eval "$(tmux show-env -gs PICKER_SESSION)"
 
 declare -a src_panes picker_panes capture_starts capture_ends
 declare -A picker_tty_by_id
