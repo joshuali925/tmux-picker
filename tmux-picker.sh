@@ -26,27 +26,30 @@ function init_picker_window() {
     echo "$picker_ids"
 }
 
-# Sort tmux list-panes output by (pane_top, pane_left) numerically and strip
-# those two leading columns. Input must be tab-separated with top, left as
-# the first two fields. Numeric sort matters because pane_top "10" and "9"
-# would compare wrong as strings. Done in gawk (one fork) instead of sort+cut
-# (two forks) — pane counts are small so insertion sort is fine.
+# Insertion-sort lines by (pane_top, pane_left) numerically, then strip those
+# two leading tab fields. Bash-only — saves a gawk fork on the hot path. Pane
+# counts are tiny (typically 1-10) so O(n²) is fine.
 function _sort_panes_by_top_left() {
-    gawk -F'\t' '
-        { top[NR]=$1+0; left[NR]=$2+0; sub(/^[^\t]*\t[^\t]*\t/, ""); line[NR]=$0 }
-        END {
-            n = NR
-            for (i=2; i<=n; i++) {
-                j = i
-                while (j>1 && (top[j]<top[j-1] || (top[j]==top[j-1] && left[j]<left[j-1]))) {
-                    t=top[j]; top[j]=top[j-1]; top[j-1]=t
-                    t=left[j]; left[j]=left[j-1]; left[j-1]=t
-                    t=line[j]; line[j]=line[j-1]; line[j-1]=t
-                    j--
-                }
-            }
-            for (i=1; i<=n; i++) print line[i]
-        }'
+    local -a tops=() lefts=() lines=()
+    local _t _l _rest
+    while IFS=$'\t' read -r _t _l _rest; do
+        [[ -z $_t ]] && continue
+        tops+=("$_t"); lefts+=("$_l"); lines+=("$_rest")
+    done
+    local n=${#tops[@]} i j tmp
+    for (( i=1; i<n; i++ )); do
+        j=$i
+        while (( j>0 )) && {
+            (( tops[j] < tops[j-1] )) ||
+            (( tops[j] == tops[j-1] && lefts[j] < lefts[j-1] ))
+        }; do
+            tmp=${tops[j]};  tops[j]=${tops[j-1]};   tops[j-1]=$tmp
+            tmp=${lefts[j]}; lefts[j]=${lefts[j-1]}; lefts[j-1]=$tmp
+            tmp=${lines[j]}; lines[j]=${lines[j-1]}; lines[j-1]=$tmp
+            (( j-- ))
+        done
+    done
+    for (( i=0; i<n; i++ )); do printf '%s\n' "${lines[i]}"; done
 }
 
 function prompt_picker_for_window() {
