@@ -7,6 +7,7 @@ function init_picker_window() {
     local source_layout=$2
     local last_pane_id=$3
     local pane_was_zoomed=$4
+    local source_window_name=$5
 
     # Picker window lives in a detached side session so its name never appears
     # in the source session's status bar — the user sees no [picker] entry, no
@@ -21,20 +22,22 @@ function init_picker_window() {
     # `tmux wait-for $picker_session` until the parent finishes setup and
     # signals via `wait-for -S`; tmux queues the signal so order is safe.
     local hint_cmd="exec '$CURRENT_DIR/hint_mode.sh' '$last_pane_id' '$pane_was_zoomed' '$picker_session'"
-    local picker_ids=$(tmux new-session -d -s "$picker_session" -F "#{pane_id}:#{window_id}" -P -x 200 -y 80 "$hint_cmd")
+    # Name the picker window after the source window so if any tmux machinery
+    # ever surfaces it (e.g. user lists sessions), it doesn't show "bash".
+    # -n alone isn't enough because automatic-rename (default on) would
+    # overwrite it once bash starts; the explicit set-option below pins it.
+    local picker_ids=$(tmux new-session -d -s "$picker_session" -n "$source_window_name" -F "#{pane_id}:#{window_id}" -P -x 200 -y 80 "$hint_cmd")
     local picker_pane_id=${picker_ids%%:*}
     local picker_window_id=${picker_ids#*:}
 
-    local i cmd=""
+    local i cmd="set-option -wt $picker_window_id automatic-rename off"
     for (( i=1; i<source_pane_count; i++ )); do
-        cmd+="${cmd:+ \\; }split-window -d -t $picker_pane_id 'sleep 2147483647'"
+        cmd+=" \\; split-window -d -t $picker_pane_id 'sleep 2147483647'"
     done
     if [[ -n "$source_layout" ]]; then
-        cmd+="${cmd:+ \\; }select-layout -t $picker_window_id '$source_layout'"
+        cmd+=" \\; select-layout -t $picker_window_id '$source_layout'"
     fi
-    if [[ -n "$cmd" ]]; then
-        eval "tmux $cmd >/dev/null"
-    fi
+    eval "tmux $cmd >/dev/null"
 
     # Stash the side-session name so hint_mode.sh can kill it on exit (instead
     # of kill-window, which would leave an orphaned empty session around).
@@ -72,6 +75,7 @@ function prompt_picker_for_window() {
     local last_pane_id=$2
     local source_layout=$3
     local pane_was_zoomed=$4
+    local source_window_name=$5
 
     # Source window: get id+height+scroll+mode in one list-panes call (saves
     # a fork over a second list-panes for height/scroll/mode).
@@ -93,7 +97,7 @@ function prompt_picker_for_window() {
 
     local picker_pane_id picker_window_id picker_session
     IFS=: read -r picker_pane_id picker_window_id picker_session < <(
-        init_picker_window "$source_pane_count" "$source_layout" "$last_pane_id" "$pane_was_zoomed"
+        init_picker_window "$source_pane_count" "$source_layout" "$last_pane_id" "$pane_was_zoomed" "$source_window_name"
     )
 
     # Picker window: collect ordered ids and ttys here. Stashing ttys upstream
@@ -156,10 +160,12 @@ function prompt_picker_for_window() {
     read -r last_pane_id
     read -r source_layout
     read -r pane_was_zoomed
+    read -r source_window_name
 } < <(
     tmux display -p '#{pane_id}' \
        \; display -pt':.{last}' '#{pane_id}' \
        \; display -p '#{window_layout}' \
-       \; display -p '#{?window_zoomed_flag,1,0}' 2>/dev/null
+       \; display -p '#{?window_zoomed_flag,1,0}' \
+       \; display -p '#{window_name}' 2>/dev/null
 )
-prompt_picker_for_window "$current_pane_id" "$last_pane_id" "$source_layout" "$pane_was_zoomed" >/dev/null
+prompt_picker_for_window "$current_pane_id" "$last_pane_id" "$source_layout" "$pane_was_zoomed" "$source_window_name" >/dev/null
