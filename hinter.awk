@@ -2,17 +2,13 @@
 
 BEGIN {
     highlight_patterns = ENVIRON["PICKER_PATTERNS"]
-    # Only build the blacklist regex when user actually configured one — the
-    # check runs on every match and is otherwise pure overhead.
-    user_blacklist = ENVIRON["PICKER_BLACKLIST_PATTERNS"]
-    have_blacklist = (user_blacklist != "")
-    if (have_blacklist) {
-        blacklist = "(^\x1b\\[[0-9;]+m|^|[[:space:]:<>)(&#'\"])"user_blacklist"$"
-    }
 
     hint_format = ENVIRON["PICKER_HINT_FORMAT"]
-    hint_format_nocolor = ENVIRON["PICKER_HINT_FORMAT_NOCOLOR"]
-    hint_format_len = length(sprintf(hint_format_nocolor, ""))
+    # Visible cell width of the hint label's surround text — strip ANSI from
+    # the empty-substitution form to get the "padding" the format adds.
+    sample = sprintf(hint_format, "")
+    gsub(/\x1b\[[0-9;]+m/, "", sample)
+    hint_format_len = length(sample)
     highlight_format = ENVIRON["PICKER_HIGHLIGHT_FORMAT"]
     compound_format = hint_format highlight_format
 
@@ -108,7 +104,6 @@ function compute_outer_indices(pat,    n, i, c, c2, j, depth, group_idx, in_clas
     if (index($0, "\x01") || index($0, "\x02")) gsub(/[\x01\x02]/, "", $0)
     line = $0;
     output_line = "";
-    skipped_prefix = "";
 
     # Match against a SGR-stripped copy and remap positions back, so patterns
     # work through gradient/per-character coloring (e.g. spinner output that
@@ -166,39 +161,34 @@ function compute_outer_indices(pat,    n, i, c, c2, j, depth, group_idx, in_clas
         body_end_o = piece_orig_start[cur_piece] + (s_end + 1 - piece_stripped_start[cur_piece]) - 1
 
         last_o = (pos > 0) ? prev_end_o : 0
-        pre_match = skipped_prefix substr(line, last_o + 1, body_start_o - 1 - last_o)
+        pre_match = substr(line, last_o + 1, body_start_o - 1 - last_o)
         # body is the stripped match text; embedded escapes are absorbed by
         # the hint replacement, so paste output stays clean.
         body = substr(stripped, body_start_s, s_end - body_start_s + 1)
 
-        if (!have_blacklist || body !~ blacklist) {
-            idx = match_idx_by_text[body]
-            if (!idx) {
-                n_unique++
-                idx = n_unique
-                match_idx_by_text[body] = idx
-                unique_match_text[n_unique] = body
-            }
-
-            # Carry forward any SGR state from the prefix so subsequent text
-            # keeps its color. Mostly matters for prompts; cap at ~500 chars.
-            color_carry = ""
-            if (length(output_line) < 500 && index(pre_match, "\x1b") > 0) {
-                num_colors = split(pre_match, arr, /\x1b\[[0-9;]+m/, colors);
-                if (num_colors > 1) {
-                    # join() treats "" as a sentinel for " "; pass SUBSEP for
-                    # empty separator so the escapes concatenate cleanly.
-                    color_carry = join(colors, 1, num_colors - 1, SUBSEP)
-                }
-            }
-
-            # Defer rendering: store match index inline; resolved at END once
-            # the hint pool is chosen based on total unique-match count.
-            output_line = output_line pre_match "\x01" idx "\x02" color_carry;
-            skipped_prefix = "";
-        } else {
-            skipped_prefix = skipped_prefix substr(line, last_o + 1, body_end_o - last_o)
+        idx = match_idx_by_text[body]
+        if (!idx) {
+            n_unique++
+            idx = n_unique
+            match_idx_by_text[body] = idx
+            unique_match_text[n_unique] = body
         }
+
+        # Carry forward any SGR state from the prefix so subsequent text
+        # keeps its color. Mostly matters for prompts; cap at ~500 chars.
+        color_carry = ""
+        if (length(output_line) < 500 && index(pre_match, "\x1b") > 0) {
+            num_colors = split(pre_match, arr, /\x1b\[[0-9;]+m/, colors);
+            if (num_colors > 1) {
+                # join() treats "" as a sentinel for " "; pass SUBSEP for
+                # empty separator so the escapes concatenate cleanly.
+                color_carry = join(colors, 1, num_colors - 1, SUBSEP)
+            }
+        }
+
+        # Defer rendering: store match index inline; resolved at END once
+        # the hint pool is chosen based on total unique-match count.
+        output_line = output_line pre_match "\x01" idx "\x02" color_carry;
         prev_end_o = body_end_o
         pos = s_end
     }
@@ -208,7 +198,7 @@ function compute_outer_indices(pat,    n, i, c, c2, j, depth, group_idx, in_clas
     # Prefix every line except the first of its pane with a newline. The
     # first emitted line lands at the cursor's home position from \x1b[H so
     # row 1 isn't wasted on a blank.
-    line_buffer[n_lines] = (n_lines == file_first_line[n_files] ? "" : "\n") (output_line skipped_prefix substr(line, tail_o + 1));
+    line_buffer[n_lines] = (n_lines == file_first_line[n_files] ? "" : "\n") (output_line substr(line, tail_o + 1));
 }
 
 END {
