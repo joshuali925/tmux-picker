@@ -6,9 +6,13 @@ function init_picker_window() {
     local source_pane_count=$1
     local source_layout=$2
 
-    # picker_pane_id is later respawned with hint_mode.sh; the rest sleep so
-    # their tty stays blank under the hints.
-    local picker_ids=$(tmux new-window -F "#{pane_id}:#{window_id}" -P -d -n "[picker]" 'sleep 2147483647')
+    # Picker window lives in a detached side session so its name never appears
+    # in the source session's status bar — the user sees no [picker] entry, no
+    # window-list shift, no status flash. Same client (active session) keeps
+    # the visible source window; we only swap *panes* across, not windows.
+    # The session is named with our pid so concurrent invocations don't clash.
+    local picker_session="picker-$$"
+    local picker_ids=$(tmux new-session -d -s "$picker_session" -F "#{pane_id}:#{window_id}" -P -x 200 -y 80 'sleep 2147483647')
     local picker_pane_id=${picker_ids%%:*}
     local picker_window_id=${picker_ids#*:}
 
@@ -23,7 +27,9 @@ function init_picker_window() {
         eval "tmux $cmd >/dev/null"
     fi
 
-    echo "$picker_ids"
+    # Stash the side-session name so hint_mode.sh can kill it on exit (instead
+    # of kill-window, which would leave an orphaned empty session around).
+    echo "$picker_ids:$picker_session"
 }
 
 # Insertion-sort lines by (pane_top, pane_left) numerically, then strip those
@@ -76,8 +82,8 @@ function prompt_picker_for_window() {
     )
     local source_pane_count=${#source_panes[@]}
 
-    local picker_pane_id picker_window_id
-    IFS=: read -r picker_pane_id picker_window_id < <(
+    local picker_pane_id picker_window_id picker_session
+    IFS=: read -r picker_pane_id picker_window_id picker_session < <(
         init_picker_window "$source_pane_count" "$source_layout"
     )
 
@@ -129,6 +135,7 @@ function prompt_picker_for_window() {
         pairs+="$src_pane"$'\t'"${picker_panes[i]}"$'\t'"$start_capture"$'\t'"$end_capture"$'\t'"${picker_tty[${picker_panes[i]}]}"$'\n'
     done
     tmux setenv -g PICKER_PAIRS "$pairs" \
+        \; setenv -g PICKER_SESSION "$picker_session" \
         \; respawn-pane -k -t "$picker_pane_id" \
             "$CURRENT_DIR/hint_mode.sh \"$last_pane_id\" \"$pane_was_zoomed\""
 }

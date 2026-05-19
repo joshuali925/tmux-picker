@@ -10,6 +10,7 @@ pane_was_zoomed=$2
 picker_pane_id=$TMUX_PANE
 
 eval "$(tmux show-env -gs PICKER_PAIRS)"
+eval "$(tmux show-env -gs PICKER_SESSION)"
 
 declare -a src_panes picker_panes capture_starts capture_ends
 declare -A picker_tty_by_id
@@ -83,7 +84,9 @@ function handle_exit() {
         run_picker_copy_command "$result" "$input"
     fi
 
-    tmux setenv -gu PICKER_PAIRS \; kill-window -t "$picker_pane_id"
+    # Kill the side session — this also tears down its window and our pane.
+    # PICKER_SESSION is the dedicated session created by tmux-picker.sh.
+    tmux setenv -gu PICKER_PAIRS \; setenv -gu PICKER_SESSION \; kill-session -t "$PICKER_SESSION"
 }
 
 
