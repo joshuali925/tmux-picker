@@ -86,27 +86,17 @@ function compute_outer_indices(pat,    n, i, c, c2, j, depth, group_idx, in_clas
     }
 }
 
-{
-    # File-separator (\x1c) lines mark pane boundaries when all captures arrive
-    # in one stream from a chained `capture-pane \; display-message \; ...`
-    # — one tmux fork instead of N. The sentinel line starts a new file.
-    if (substr($0, 1, 1) == "\x1c") {
-        n_files++
-        file_first_line[n_files] = n_lines + 1
-        next
-    }
-    # First data line opens the first file when no leading sentinel was emitted.
-    if (n_files == 0) {
-        n_files = 1
-        file_first_line[1] = 1
-    }
-    # SOH/STX are reserved as placeholder delimiters in line_buffer.
-    if (index($0, "\x01") || index($0, "\x02")) gsub(/[\x01\x02]/, "", $0)
-    line = $0;
-    output_line = "";
-    post_match = line;
+# Run the match-and-replace loop on `input`, accumulating into globals
+# output_line / final_post_match / n_matched_in_line. Factored so the
+# gradient-fallback path can rerun on a stripped copy of the line.
+function process_line(input,    line, matches, k, oi, outer_idx, prefix_idx, idx, line_match, pre_match, post_match, num_colors, arr, colors) {
+    line = input
+    post_match = line
+    output_line = ""
+    n_matched_in_line = 0
 
     while (match(line, highlight_patterns, matches)) {
+        n_matched_in_line++
         pre_match = substr(line, 1, RSTART - 1);
         post_match = substr(line, RSTART + RLENGTH);
         line_match = matches[0]
@@ -156,12 +146,47 @@ function compute_outer_indices(pat,    n, i, c, c2, j, depth, group_idx, in_clas
         output_line = output_line pre_match "\x01" idx "\x02";
         line = post_match;
     }
+    final_post_match = post_match
+}
+
+{
+    # File-separator (\x1c) lines mark pane boundaries when all captures arrive
+    # in one stream from a chained `capture-pane \; display-message \; ...`
+    # — one tmux fork instead of N. The sentinel line starts a new file.
+    if (substr($0, 1, 1) == "\x1c") {
+        n_files++
+        file_first_line[n_files] = n_lines + 1
+        next
+    }
+    # First data line opens the first file when no leading sentinel was emitted.
+    if (n_files == 0) {
+        n_files = 1
+        file_first_line[1] = 1
+    }
+    # SOH/STX are reserved as placeholder delimiters in line_buffer.
+    if (index($0, "\x01") || index($0, "\x02")) gsub(/[\x01\x02]/, "", $0)
+
+    process_line($0)
+
+    # Gradient fallback: per-character SGR coloring (e.g. spinner output that
+    # wraps every char in its own escape) breaks contiguous matching. If the
+    # raw line found nothing and contains escapes, retry on a stripped copy
+    # and emit the stripped form so hints can apply. Lines that match raw and
+    # plain lines never enter this branch — no overhead on the hot path.
+    if (n_matched_in_line == 0 && index($0, "\x1b") > 0) {
+        stripped = $0
+        gsub(/\x1b\[[0-9;]+m/, "", stripped)
+        if (stripped != $0) {
+            process_line(stripped)
+            if (n_matched_in_line == 0) final_post_match = $0
+        }
+    }
 
     n_lines++
     # Prefix every line except the first of its pane with a newline. The
     # first emitted line lands at the cursor's home position from \x1b[H so
     # row 1 isn't wasted on a blank.
-    line_buffer[n_lines] = (n_lines == file_first_line[n_files] ? "" : "\n") (output_line post_match);
+    line_buffer[n_lines] = (n_lines == file_first_line[n_files] ? "" : "\n") (output_line final_post_match);
 }
 
 END {
