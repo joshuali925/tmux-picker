@@ -1,4 +1,14 @@
-@include "join.awk" # bare "join" only resolves on gawk 4.1+
+# Inlined gawk lib `join.awk` to skip an extra @include disk lookup.
+function join(array, start, end, sep,    result, i) {
+    if (sep == "")
+       sep = " "
+    else if (sep == SUBSEP)  # magic value: no separator
+       sep = ""
+    result = array[start]
+    for (i = start + 1; i <= end; i++)
+        result = result sep array[i]
+    return result
+}
 
 BEGIN {
     # SP anchors matches outside ANSI escapes (capture-pane -e leaves them
@@ -39,12 +49,11 @@ BEGIN {
     hint_format_len = length(sample)
     compound_format = hint_format highlight_format
 
-    # tty_by_idx[fi] is the picker tty for the fi-th capture file (in arg order).
-    split(ENVIRON["TTY_LIST"], tty_by_idx, "\n")
-
     n_unique = 0
     n_files = 0
     n_lines = 0
+    n_ttys = 0
+    awaiting_ttys = 1
 
     # Pre-compute the outer-group index for each top-level alternation arm
     # so per-match prefix lookup walks a small fixed list instead of every
@@ -177,6 +186,17 @@ function process_line(input,    line, matches, k, oi, outer_idx, prefix_idx, idx
 }
 
 {
+    # The first stream block is a tty list terminated by an empty line — bash
+    # pre-feeds it before piping captures so the END block can write
+    # rendered payloads straight to each picker pane's pty (skipping a bash
+    # distribution loop). Empty TTY_LIST or no list = no direct write; bash
+    # will distribute via the legacy idx\tbody payload format.
+    if (awaiting_ttys) {
+        if ($0 == "") { awaiting_ttys = 0; next }
+        n_ttys++
+        tty_by_idx[n_ttys] = $0
+        next
+    }
     # File-separator (\x1c) lines mark pane boundaries when all captures arrive
     # in one stream from a chained `capture-pane \; display-message \; ...`
     # — one tmux fork instead of N. The sentinel line starts a new file.
@@ -290,10 +310,11 @@ END {
     delete orig_by_rank
     delete sort_key
 
-    # hint table, then \x1d sentinel, then "<idx>\t<payload>\x1e" records.
-    # Bash distributes per-pane payloads to ttys — hinter doesn't need tty
-    # info, so it can run as soon as captures land.
+    # Emit the hint table first and flush so bash can start parsing/building
+    # PICKER_PAIRS while we render and ship per-pane payloads. The \x1d
+    # sentinel terminates the hint table.
     printf "%s\x1d\n", hint_lookup
+    fflush()
     for (fi = 1; fi <= n_files; fi++) {
         pane_out = "\x1b[2J\x1b[H"
         end = (fi < n_files) ? file_first_line[fi+1] - 1 : n_lines
@@ -307,6 +328,17 @@ END {
             }
             pane_out = pane_out buf
         }
-        printf "%d\t%s\x1e", fi - 1, pane_out
+        # If a tty list was supplied, ship payloads directly to each picker
+        # pty — saves the bash distribution loop and its per-pane open/write.
+        if (n_ttys >= fi) {
+            printf "%s", pane_out > tty_by_idx[fi]
+            close(tty_by_idx[fi])
+        } else {
+            printf "%d\t%s\x1e", fi - 1, pane_out
+        }
     }
+    # Sync sentinel: bash blocks reading this until all TTY writes have
+    # flushed, ensuring the picker panes are populated before swap-pane
+    # makes them visible.
+    if (n_ttys > 0) printf "\x1e"
 }

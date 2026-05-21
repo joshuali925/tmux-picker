@@ -13,6 +13,10 @@
 #
 # Env:
 #   BENCH_KEEP_RESULTS=1 — keep the raw per-run ms file and print its path.
+#   BENCH_PHASES=1       — print median per-phase deltas from the picker
+#                          internal _bench markers (start, after RT1, after
+#                          merged tmux, ...). Useful for spotting where
+#                          regressions land without rerunning manually.
 #   NO_COLOR=1           — disable ANSI color output.
 #
 # Requires bash 4.4+ (mapfile -d), gawk, tmux 3.x.
@@ -27,6 +31,7 @@ SOCKET="picker_bench_$$"
 WORKDIR=$(mktemp -d "${TMPDIR:-/tmp}/tmux-picker-bench-XXXXXX")
 LOG="$WORKDIR/run.log"
 RESULT="$WORKDIR/results.txt"
+PHASES_LOG="$WORKDIR/phases.txt"
 
 # ANSI colors. Auto-disable for non-TTY stderr or when NO_COLOR is set.
 if [[ -z ${NO_COLOR:-} ]] && [[ -t 2 ]]; then
@@ -134,6 +139,18 @@ run_once() {
         $3 == "after swap (HINTS VISIBLE)" && !e { e = $1 }
         END { if (s && e) printf "%.3f\n", (e - s) * 1000 }
     ' "$LOG"
+    # Append per-phase deltas (ms) for this run, one column per phase, so
+    # the summary at the end can compute medians per phase.
+    if [[ ${BENCH_PHASES:-0} == 1 ]]; then
+        awk -F$'\t' '
+            { ts[NR] = $1 + 0; label[NR] = $3 }
+            END {
+                for (i = 2; i <= NR; i++)
+                    printf "%s\t%.3f\n", label[i], (ts[i] - ts[i-1]) * 1000
+                printf "_total\t%.3f\n", (ts[NR] - ts[1]) * 1000
+            }
+        ' "$LOG" >> "$PHASES_LOG"
+    fi
     tmux -L "$SOCKET" kill-server 2>/dev/null || true
     sleep 0.05
 }
@@ -207,3 +224,31 @@ for n_panes in "${PANES_LIST[@]}"; do
     [[ -n ${SUMMARY[$n_panes]:-} ]] || continue
     printf '%s\n' "${SUMMARY[$n_panes]}" >&2
 done
+
+# Per-phase median breakdown — handy for spotting which stage moved when a
+# change shifts the overall p50.
+if [[ ${BENCH_PHASES:-0} == 1 && -s $PHASES_LOG ]]; then
+    printf '\n%sphase medians (ms)%s\n' "$C_BOLD" "$C_RESET" >&2
+    C_BOLD="$C_BOLD" C_DIM="$C_DIM" C_RESET="$C_RESET" \
+    C_CYAN="$C_CYAN" C_YELLOW="$C_YELLOW" \
+    awk -F$'\t' '
+        BEGIN {
+            BOLD = ENVIRON["C_BOLD"]; DIM = ENVIRON["C_DIM"]
+            RST  = ENVIRON["C_RESET"]; CYN = ENVIRON["C_CYAN"]
+            YLW  = ENVIRON["C_YELLOW"]
+        }
+        { vals[$1, ++count[$1]] = $2 + 0; if (!seen[$1]++) order[++n] = $1 }
+        END {
+            for (i = 1; i <= n; i++) {
+                k = order[i]; m = count[k]
+                # naive sort
+                for (a = 1; a < m; a++)
+                    for (b = a+1; b <= m; b++)
+                        if (vals[k,a] > vals[k,b]) { t=vals[k,a]; vals[k,a]=vals[k,b]; vals[k,b]=t }
+                med = vals[k, int((m+1)/2)]
+                color = (k == "_total") ? YLW : CYN
+                printf "  %s%-40s%s %s%7.2f%s\n", DIM, k, RST, color, med, RST
+            }
+        }
+    ' "$PHASES_LOG" >&2
+fi
