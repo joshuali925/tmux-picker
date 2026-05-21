@@ -290,14 +290,14 @@ END {
     delete orig_by_rank
     delete sort_key
 
+    # hint table, then \x1d sentinel, then "<idx>\t<payload>\x1e" records.
+    # Bash distributes per-pane payloads to ttys — hinter doesn't need tty
+    # info, so it can run as soon as captures land.
+    printf "%s\x1d\n", hint_lookup
     for (fi = 1; fi <= n_files; fi++) {
-        out = tty_by_idx[fi]
-        # Build the entire pane payload first, then write in one printf —
-        # avoids ~tens of thousands of tiny writes to a tty.
         pane_out = "\x1b[2J\x1b[H"
-        start = file_first_line[fi]
         end = (fi < n_files) ? file_first_line[fi+1] - 1 : n_lines
-        for (li = start; li <= end; li++) {
+        for (li = file_first_line[fi]; li <= end; li++) {
             buf = line_buffer[li]
             while ((p = index(buf, "\x01")) > 0) {
                 rest = substr(buf, p + 1)
@@ -307,9 +307,6 @@ END {
             }
             pane_out = pane_out buf
         }
-        printf "%s", pane_out > out
-        close(out)
+        printf "%d\t%s\x1e", fi - 1, pane_out
     }
-
-    printf "%s", hint_lookup
 }

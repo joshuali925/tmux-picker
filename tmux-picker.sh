@@ -2,42 +2,19 @@
 
 CURRENT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-function init_picker_window() {
-    local source_pane_count=$1
-    local source_layout=$2
-    local last_pane_id=$3
-    local pane_was_zoomed=$4
-    local source_window_name=$5
-
-    # Detached side session so the picker window never shows in the source
-    # session's status bar. Pid-suffixed name avoids concurrent-run collision.
-    local picker_session="picker-$$"
-
-    # Launch hint_mode.sh directly (not via sleep + later respawn-pane) so its
-    # bash startup overlaps with parent IPC; it blocks on `tmux wait-for` until
-    # the parent has populated PICKER_PAIRS and calls `wait-for -S`.
-    local hint_cmd="exec '$CURRENT_DIR/hint_mode.sh' '$last_pane_id' '$pane_was_zoomed' '$picker_session'"
-    # -n names the window after the source window; automatic-rename would
-    # overwrite it once bash starts, so the set-option below pins it.
-    local picker_ids=$(tmux new-session -d -s "$picker_session" -n "$source_window_name" -F "#{pane_id}:#{window_id}" -P -x 200 -y 80 "$hint_cmd")
-    local picker_pane_id=${picker_ids%%:*}
-    local picker_window_id=${picker_ids#*:}
-
-    local i cmd="set-option -wt $picker_window_id automatic-rename off"
-    for (( i=1; i<source_pane_count; i++ )); do
-        cmd+=" \\; split-window -d -t $picker_pane_id 'sleep 2147483647'"
-    done
-    if [[ -n "$source_layout" ]]; then
-        cmd+=" \\; select-layout -t $picker_window_id '$source_layout'"
-    fi
-    eval "tmux $cmd >/dev/null"
-
-    echo "$picker_ids:$picker_session"
+# Opt-in bench. TMUX_PICKER_BENCH=1 logs phase timestamps and makes
+# hint_mode.sh exit right after rendering hints (skips read loop).
+: ${TMUX_PICKER_BENCH:=0}
+: ${TMUX_PICKER_BENCH_FILE:=/tmp/tmux-picker-bench.log}
+export TMUX_PICKER_BENCH TMUX_PICKER_BENCH_FILE
+function _bench() {
+    [[ $TMUX_PICKER_BENCH == 1 ]] || return 0
+    printf '%s\t%s\t%s\n' "$EPOCHREALTIME" "tmux-picker" "$*" >> "$TMUX_PICKER_BENCH_FILE"
 }
+_bench start
 
-# Insertion-sort lines by (pane_top, pane_left) numerically, then strip those
-# two leading tab fields. Bash-only — saves a gawk fork on the hot path. Pane
-# counts are tiny (typically 1-10) so O(n²) is fine.
+# Insertion-sort lines by (pane_top, pane_left) numerically, then strip
+# those two leading tab fields. Pane counts are tiny so O(n²) is fine.
 function _sort_panes_by_top_left() {
     local -a tops=() lefts=() lines=()
     local _t _l _rest
@@ -61,97 +38,140 @@ function _sort_panes_by_top_left() {
     for (( i=0; i<n; i++ )); do printf '%s\n' "${lines[i]}"; done
 }
 
-function prompt_picker_for_window() {
-    local current_pane_id=$1
-    local last_pane_id=$2
-    local source_layout=$3
-    local pane_was_zoomed=$4
-    local source_window_name=$5
-
-    # Source window: get id+height+scroll+mode in one list-panes call (saves
-    # a fork over a second list-panes for height/scroll/mode).
-    local -a source_panes
-    declare -A pane_height pane_scroll pane_in_mode
-    local _id _h _s _m
-    while IFS=$'\t' read -r _id _h _s _m; do
-        [[ -z $_id ]] && continue
-        source_panes+=("$_id")
-        pane_height[$_id]=$_h
-        pane_scroll[$_id]=$_s
-        pane_in_mode[$_id]=$_m
-    done < <(
-        tmux list-panes -t "$current_pane_id" \
-            -F '#{pane_top}	#{pane_left}	#{pane_id}	#{pane_height}	#{scroll_position}	#{?pane_in_mode,1,0}' |
-        _sort_panes_by_top_left
-    )
-    local source_pane_count=${#source_panes[@]}
-
-    local picker_pane_id picker_window_id picker_session
-    IFS=: read -r picker_pane_id picker_window_id picker_session < <(
-        init_picker_window "$source_pane_count" "$source_layout" "$last_pane_id" "$pane_was_zoomed" "$source_window_name"
-    )
-
-    # Picker window: collect ordered ids and ttys here. Stashing ttys upstream
-    # spares hint_mode.sh a tmux list-panes fork.
-    local -a picker_panes
-    declare -A picker_tty
-    local _pid _tty
-    while IFS=$'\t' read -r _pid _tty; do
-        [[ -z $_pid ]] && continue
-        picker_panes+=("$_pid")
-        picker_tty[$_pid]=$_tty
-    done < <(
-        tmux list-panes -t "$picker_window_id" \
-            -F '#{pane_top}	#{pane_left}	#{pane_id}	#{pane_tty}' |
-        _sort_panes_by_top_left
-    )
-
-    # Realign picker panes so picker_pane_id (which runs hint_mode.sh) pairs
-    # with current_pane_id — after the final swap, picker_pane_id lands in
-    # current_pane_id's slot, staying active so keystrokes reach the read loop
-    # and hints render correctly when current_pane_id was zoomed.
-    local current_idx=-1 picker_idx=-1 i
-    for (( i=0; i<source_pane_count; i++ )); do
-        [[ ${source_panes[i]} == "$current_pane_id" ]] && current_idx=$i
-        [[ ${picker_panes[i]} == "$picker_pane_id" ]] && picker_idx=$i
-    done
-    if (( current_idx >= 0 && picker_idx >= 0 && current_idx != picker_idx )); then
-        tmux swap-pane -s "$picker_pane_id" -t "${picker_panes[current_idx]}"
-        local tmp=${picker_panes[picker_idx]}
-        picker_panes[picker_idx]=${picker_panes[current_idx]}
-        picker_panes[current_idx]=$tmp
-    fi
-
-    # Stash one row per pane in tmux env: src_pane / picker_pane / capture
-    # start / capture end / picker_tty.
-    local pairs="" src_pane start_capture end_capture
-    for (( i=0; i<source_pane_count; i++ )); do
-        src_pane=${source_panes[i]}
-        if [[ ${pane_in_mode[$src_pane]} == "1" ]]; then
-            start_capture=$(( -${pane_scroll[$src_pane]:-0} ))
-            end_capture=$(( ${pane_height[$src_pane]} - ${pane_scroll[$src_pane]:-0} - 1 ))
-        else
-            start_capture=0
-            end_capture="-"
-        fi
-        pairs+="$src_pane"$'\t'"${picker_panes[i]}"$'\t'"$start_capture"$'\t'"$end_capture"$'\t'"${picker_tty[${picker_panes[i]}]}"$'\n'
-    done
-    # Hand pairs to the waiting hint_mode.sh and unblock it — one tmux call.
-    # Session-scoped env stays out of new shells in other sessions.
-    tmux setenv -t "$picker_session" PICKER_PAIRS "$pairs" \; wait-for -S "$picker_session"
-}
-
-{
-    read -r current_pane_id
-    read -r last_pane_id
-    read -r source_layout
-    read -r pane_was_zoomed
-    read -r source_window_name
-} < <(
+# RT1: 5 displays + source list-panes in one round-trip. \x1c separates
+# the scalar header from the list-panes rows.
+_initial_block=$(
     tmux display -p '#{pane_id}' \
        \; display -pt':.{last}' '#{pane_id}' \
        \; display -p '#{window_layout}' \
        \; display -p '#{?window_zoomed_flag,1,0}' \
-       \; display -p '#{window_name}' 2>/dev/null
+       \; display -p '#{window_name}' \
+       \; display -p $'\x1c' \
+       \; list-panes -F '#{pane_top}	#{pane_left}	#{pane_id}	#{pane_height}	#{scroll_position}	#{?pane_in_mode,1,0}' 2>/dev/null
 )
-prompt_picker_for_window "$current_pane_id" "$last_pane_id" "$source_layout" "$pane_was_zoomed" "$source_window_name" >/dev/null
+{ IFS= read -r current_pane_id
+  IFS= read -r last_pane_id
+  IFS= read -r source_layout
+  IFS= read -r pane_was_zoomed
+  IFS= read -r source_window_name
+} <<< "${_initial_block%%$'\n\x1c\n'*}"
+
+declare -a source_panes
+declare -A pane_height pane_scroll pane_in_mode
+while IFS=$'\t' read -r _id _h _s _m; do
+    [[ -z $_id ]] && continue
+    source_panes+=("$_id")
+    pane_height[$_id]=$_h
+    pane_scroll[$_id]=$_s
+    pane_in_mode[$_id]=$_m
+done < <(_sort_panes_by_top_left <<< "${_initial_block#*$'\n\x1c\n'}")
+source_pane_count=${#source_panes[@]}
+
+declare -a capture_starts capture_ends
+for (( i=0; i<source_pane_count; i++ )); do
+    s=${source_panes[i]}
+    if [[ ${pane_in_mode[$s]} == "1" ]]; then
+        capture_starts[i]=$(( -${pane_scroll[$s]:-0} ))
+        capture_ends[i]=$(( ${pane_height[$s]} - ${pane_scroll[$s]:-0} - 1 ))
+    else
+        capture_starts[i]=0
+        capture_ends[i]="-"
+    fi
+done
+
+picker_session="picker-$$"
+hint_cmd="TMUX_PICKER_BENCH=$TMUX_PICKER_BENCH TMUX_PICKER_BENCH_FILE='$TMUX_PICKER_BENCH_FILE' exec '$CURRENT_DIR/hint_mode.sh' '$picker_session'"
+
+# RT2: parallel tmux clients on the same server.
+#   caps  (FD3, process sub): capture-pane streams via gawk
+#   setup (foreground):        new-session + layout + picker list-panes
+# Process sub avoids a tmpfs file create+write+read on macOS.
+cap_cmd=""
+for (( i=0; i<source_pane_count; i++ )); do
+    cap_cmd+="${cap_cmd:+ \\; }display-message -p $'\\x1c'"
+    cap_cmd+=" \\; capture-pane -e -J -p -t ${source_panes[i]} -S ${capture_starts[i]} -E ${capture_ends[i]}"
+done
+
+setup_cmd="new-session -d -s $picker_session -n '$source_window_name' -F '#{pane_id}' -P -x 200 -y 80 \"$hint_cmd\""
+setup_cmd+=" \\; set-option -wt $picker_session automatic-rename off"
+for (( i=1; i<source_pane_count; i++ )); do
+    setup_cmd+=" \\; split-window -d -t $picker_session 'sleep 2147483647'"
+done
+[[ -n $source_layout ]] && setup_cmd+=" \\; select-layout -t $picker_session '$source_layout'"
+setup_cmd+=" \\; display-message -p $'\\x1c'"
+setup_cmd+=" \\; list-panes -t $picker_session -F '#{pane_top}	#{pane_left}	#{pane_id}	#{pane_tty}'"
+
+exec 3< <(eval "tmux $cap_cmd")
+setup_out=$(eval "tmux $setup_cmd")
+
+# Setup output: <picker_pane_id>\n\x1c\n<list-panes rows>
+picker_pane_id=${setup_out%%$'\n\x1c\n'*}
+declare -a picker_panes
+declare -A picker_tty
+while IFS=$'\t' read -r _pid _tty; do
+    [[ -z $_pid ]] && continue
+    picker_panes+=("$_pid")
+    picker_tty[$_pid]=$_tty
+done < <(_sort_panes_by_top_left <<< "${setup_out#*$'\n\x1c\n'}")
+
+# Realign so picker_pane_id (where hint_mode runs) lands in current_pane_id's
+# slot after the swap — keeps that pane active so keystrokes reach the read loop.
+current_idx=-1
+picker_idx=-1
+for (( i=0; i<source_pane_count; i++ )); do
+    [[ ${source_panes[i]} == "$current_pane_id" ]] && current_idx=$i
+    [[ ${picker_panes[i]} == "$picker_pane_id" ]] && picker_idx=$i
+done
+if (( current_idx >= 0 && picker_idx >= 0 && current_idx != picker_idx )); then
+    tmux swap-pane -s "$picker_pane_id" -t "${picker_panes[current_idx]}"
+    tmp=${picker_panes[picker_idx]}
+    picker_panes[picker_idx]=${picker_panes[current_idx]}
+    picker_panes[current_idx]=$tmp
+fi
+
+# Stream captures (already running in parallel with setup) through hinter.awk.
+# Output is "hint:match\n…" then \x1d sentinel then "<idx>\t<payload>\x1e" records.
+gawk_out=$(gawk -f "$CURRENT_DIR/hinter.awk" <&3)
+exec 3<&-
+hint_table=${gawk_out%%$'\x1d'*}
+payloads=${gawk_out#*$'\x1d'}
+
+declare -A match_by_hint
+while IFS=: read -r hint match; do
+    [[ -z $hint ]] && continue
+    match_by_hint[$hint]=$match
+done <<< "$hint_table"
+
+# Distribute each per-pane payload to its picker tty. The here-string in
+# `mapfile <<<` adds a trailing \n that becomes a phantom \n-only record
+# after the last \x1e — drop anything missing the idx\tbody shape.
+mapfile -d $'\x1e' -t _records <<< "$payloads"
+for rec in "${_records[@]}"; do
+    [[ $rec == *$'\t'* ]] || continue
+    idx=${rec%%$'\t'*}
+    body=${rec#*$'\t'}
+    tty=${picker_tty[${picker_panes[$idx]}]}
+    [[ -n $tty ]] && printf '%s' "$body" > "$tty"
+done
+
+# RT3: swap source ↔ picker, zoom if needed. HINTS VISIBLE after this.
+swap_cmd=""
+for (( i=0; i<source_pane_count; i++ )); do
+    swap_cmd+="${swap_cmd:+ \\; }swap-pane -d -s ${source_panes[i]} -t ${picker_panes[i]}"
+done
+final_cmd=$swap_cmd
+[[ $pane_was_zoomed == "1" ]] && final_cmd+=" \\; resize-pane -Z -t $picker_pane_id"
+eval "tmux $final_cmd"
+_bench "after swap (HINTS VISIBLE)"
+
+# Hand match table + context to hint_mode via one session-scoped env var, then
+# wait-for -S to unblock its `tmux wait-for "$picker_session"`. show-env takes
+# at most one var name, so the whole blob is packed into PICKER_PAIRS.
+printf -v _pairs 'last_pane_id=%q\ncurrent_pane_id=%q\npane_was_zoomed=%q\nswap_cmd=%q\n' \
+    "$last_pane_id" "$current_pane_id" "$pane_was_zoomed" "$swap_cmd"
+for hint in "${!match_by_hint[@]}"; do
+    printf -v _row 'match_by_hint[%q]=%q\n' "$hint" "${match_by_hint[$hint]}"
+    _pairs+=$_row
+done
+tmux setenv -t "$picker_session" PICKER_PAIRS "$_pairs" \
+        \; wait-for -S "$picker_session"
