@@ -12,7 +12,7 @@ picker_pane_id=$TMUX_PANE
 # in parallel with parent's IPC; tmux queues the signal, so order is safe.
 tmux wait-for "$picker_session"
 
-eval "$(tmux show-env -gs PICKER_PAIRS)"
+eval "$(tmux show-env -s -t "$picker_session" PICKER_PAIRS)"
 
 declare -a src_panes picker_panes capture_starts capture_ends
 declare -A picker_tty_by_id
@@ -82,8 +82,8 @@ function handle_exit() {
         run_picker_copy_command "$result" "$input"
     fi
 
-    # Kill the side session — this also tears down its window and our pane.
-    tmux setenv -gu PICKER_PAIRS \; kill-session -t "$picker_session"
+    # Kill the side session — this also tears down its window, its env, and our pane.
+    tmux kill-session -t "$picker_session"
 }
 
 

@@ -1,15 +1,42 @@
 @include "join.awk" # bare "join" only resolves on gawk 4.1+
 
 BEGIN {
-    highlight_patterns = ENVIRON["PICKER_PATTERNS"]
+    # SP anchors matches outside ANSI escapes (capture-pane -e leaves them
+    # in the stream); FCS allows escapes inside the body so a path can span
+    # color resets. SP-prefixed arms share one ((SP)(body|...)) wrapper so
+    # the regex engine has fewer top-level alternations to track per match.
+    # CS bound is `+` (no upper); earlier `{1,9}` silently stopped matching
+    # 24-bit SGR (\x1b[38;2;R;G;Bm = 16 inner chars).
+    CS = "\x1b\\[[0-9;]+m"
+    START_DELIM = "[[:space:]:<>)(&#'\"]"
+    SP = "(" CS "|^|" START_DELIM ")"
+    FCS = "([[:alnum:]_.%/~-]|" CS ")"
+    sp_bodies = FCS "*[./]" FCS "+"                                                               # filename or path
+    sp_bodies = sp_bodies "|(ds|i)-[[:alnum:]_]+"
+    sp_bodies = sp_bodies "|[0-9]+:[[:alnum:]_-]+"
+    sp_bodies = sp_bodies "|(https?://|git@|git://|ssh://|ftp://|file://)[^[:space:]]+"
+    sp_bodies = sp_bodies "|#[0-9a-fA-F]{6}"
+    sp_bodies = sp_bodies "|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"        # uuid
+    sp_bodies = sp_bodies "|Qm[[:alnum:]]{44}"                                                    # ipfs
+    sp_bodies = sp_bodies "|[0-9a-f]{7,40}"                                                       # sha
+    sp_bodies = sp_bodies "|[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}"                    # ipv4
+    sp_bodies = sp_bodies "|[A-Fa-f0-9:]+:+[A-Fa-f0-9:]+[%[:alnum:]_]+"                           # ipv6
+    sp_bodies = sp_bodies "|0x[0-9a-fA-F]+"
+    sp_bodies = sp_bodies "|[0-9]{4,}"
+    highlight_patterns = "(" SP "(" sp_bodies "))"
+    highlight_patterns = highlight_patterns "|((\\[[^]]*\\]\\()[^)]+)"                            # markdown_url
+    highlight_patterns = highlight_patterns "|((--- a/)[^[:space:]]+)"
+    highlight_patterns = highlight_patterns "|((\\+\\+\\+ b/)[^[:space:]]+)"
+    highlight_patterns = highlight_patterns "|((sha256:)[0-9a-f]{64})"
 
-    hint_format = ENVIRON["PICKER_HINT_FORMAT"]
+    # Direct ANSI escapes — tput emits SI/^O bytes that tmux 3.4+ mangles.
+    hint_format = "\x1b[38;2;0;0;0;48;2;255;140;0;1m%s\x1b[0m"
+    highlight_format = "\x1b[38;2;255;255;255;48;2;0;102;204;1m%s\x1b[0m"
     # Visible cell width of the hint label's surround text — strip ANSI from
     # the empty-substitution form to get the "padding" the format adds.
     sample = sprintf(hint_format, "")
     gsub(/\x1b\[[0-9;]+m/, "", sample)
     hint_format_len = length(sample)
-    highlight_format = ENVIRON["PICKER_HIGHLIGHT_FORMAT"]
     compound_format = hint_format highlight_format
 
     # tty_by_idx[fi] is the picker tty for the fi-th capture file (in arg order).

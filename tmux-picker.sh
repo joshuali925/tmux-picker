@@ -137,7 +137,8 @@ function prompt_picker_for_window() {
         pairs+="$src_pane"$'\t'"${picker_panes[i]}"$'\t'"$start_capture"$'\t'"$end_capture"$'\t'"${picker_tty[${picker_panes[i]}]}"$'\n'
     done
     # Hand pairs to the waiting hint_mode.sh and unblock it — one tmux call.
-    tmux setenv -g PICKER_PAIRS "$pairs" \; wait-for -S "$picker_session"
+    # Session-scoped env stays out of new shells in other sessions.
+    tmux setenv -t "$picker_session" PICKER_PAIRS "$pairs" \; wait-for -S "$picker_session"
 }
 
 {
