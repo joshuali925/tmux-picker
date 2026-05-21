@@ -61,18 +61,22 @@ while read -rsn1 char; do
     if [[ $char == "$BACKSPACE" ]]; then
         input=""
         continue
-    elif [[ $char == "<ESC>" ]]; then
-        exit
-    else
-        input="$input$char"
     fi
 
-    [[ -z $input ]] && continue
+    [[ $char =~ ^[a-zA-Z]$ ]] || continue
+
+    # Only accept the keystroke if it extends some hint's prefix.
+    candidate="$input$char"
+    extends_prefix=0
+    for hint in "${!match_by_hint[@]}"; do
+        if [[ ${hint,,} == "${candidate,,}"* ]]; then
+            extends_prefix=1
+            break
+        fi
+    done
+    (( extends_prefix )) || continue
+    input=$candidate
+
     result=${match_by_hint[${input,,}]}
-
-    if [[ -z $result ]]; then
-        continue
-    fi
-
-    exit 0
+    [[ -n $result ]] && exit 0
 done < /dev/tty
