@@ -166,6 +166,14 @@ while IFS= read -r line <&"${HINT[0]}"; do
 done
 _bench "after read hint_table"
 
+if (( ${#match_by_hint[@]} == 0 )); then
+    exec {HINT[0]}<&-
+    wait "$HINT_PID" 2>/dev/null
+    tmux kill-session -t "$picker_session" 2>/dev/null
+    tmux display-message "tmux-picker: no hints to pick, is gawk installed?"
+    exit 1
+fi
+
 # RT3 prep: build swap_cmd and PICKER_PAIRS while gawk is still writing
 # per-pane payloads to the picker ttys. By the time we wait on gawk's sync
 # sentinel, the heavy shell work is done and only the swap-pane server work
