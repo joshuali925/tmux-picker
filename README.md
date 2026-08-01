@@ -13,7 +13,9 @@ git SHAs, IPs, UUIDs, …) across **every pane in the current window** is highli
 
 * Type a hint in **lowercase** to paste the match into the originating pane (a trailing space is appended).
 * Type a hint in **UPPERCASE** to copy the match to the tmux/system clipboard without pasting.
-* <kbd>Backspace</kbd> clears the in-progress hint, <kbd>Esc</kbd> exits hint mode.
+* Entered hint characters become dark while nonmatching hints and their matches are subdued;
+  matching hint characters remain brighter. <kbd>Backspace</kbd> removes the last character
+  and restores the applicable colors; <kbd>Esc</kbd> exits hint mode.
 
 By default the following are highlighted:
 
@@ -42,11 +44,11 @@ PICKER_KEY="-n M-/"   # default: Alt-/, no tmux prefix
 
 ### Patterns and colors
 
-Patterns and the hint/highlight ANSI styles are hard-coded in `hinter.awk`'s `BEGIN` block —
-edit that file directly. Each top-level pattern is wrapped as `((prefix)body)` so the matcher
-can strip the leading `prefix` from the hinted text. Helpers `CS` (one `\e[…m` escape),
-`START_DELIM`, `SP` (`(CS|^|START_DELIM)`), and `FCS` (filename-char-or-CS) are defined at the
-top of the block.
+Patterns and the base hint/highlight ANSI styles are hard-coded in `hinter.awk`'s `BEGIN`
+block. The pressed and subdued styles are defined in `key_feedback.awk`. Each top-level
+pattern is wrapped as `((prefix)body)` so the matcher can strip the leading `prefix` from
+the hinted text. Helpers `CS` (one `\e[…m` escape), `START_DELIM`, `SP`
+(`(CS|^|START_DELIM)`), and `FCS` (filename-char-or-CS) are defined at the top of the block.
 
 ### Copy / paste behavior
 

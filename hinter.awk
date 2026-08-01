@@ -40,6 +40,9 @@ BEGIN {
     highlight_patterns = highlight_patterns "|((sha256:)[0-9a-f]{64})"
 
     # Direct ANSI escapes — tput emits SI/^O bytes that tmux 3.4+ mangles.
+    # key_feedback.awk re-locates these exact escapes with index() to recolor
+    # frames on keypress; its HINT_STYLE/HIGHLIGHT_STYLE/RESET_STYLE must stay
+    # byte-identical to these or feedback silently no-ops.
     hint_format = "\x1b[38;2;0;0;0;48;2;255;140;0;1m%s\x1b[0m"
     highlight_format = "\x1b[38;2;255;255;255;48;2;0;102;204;1m%s\x1b[0m"
     # Visible cell width of the hint label's surround text — strip ANSI from
@@ -186,11 +189,9 @@ function process_line(input,    line, matches, k, oi, outer_idx, prefix_idx, idx
 }
 
 {
-    # The first stream block is a tty list terminated by an empty line — bash
-    # pre-feeds it before piping captures so the END block can write
-    # rendered payloads straight to each picker pane's pty (skipping a bash
-    # distribution loop). Empty TTY_LIST or no list = no direct write; bash
-    # will distribute via the legacy idx\tbody payload format.
+    # The first stream block is a tty list terminated by an empty line. Bash
+    # pre-feeds it before piping captures so the END block can write rendered
+    # payloads straight to each picker pane's pty.
     if (awaiting_ttys) {
         if ($0 == "") { awaiting_ttys = 0; next }
         n_ttys++
@@ -210,8 +211,9 @@ function process_line(input,    line, matches, k, oi, outer_idx, prefix_idx, idx
         n_files = 1
         file_first_line[1] = 1
     }
-    # SOH/STX are reserved as placeholder delimiters in line_buffer.
-    if (index($0, "\x01") || index($0, "\x02")) gsub(/[\x01\x02]/, "", $0)
+    # These C0 bytes delimit internal placeholders and feedback records.
+    if ($0 ~ /[\x01\x02\x1d\x1e\x1f]/)
+        gsub(/[\x01\x02\x1d\x1e\x1f]/, "", $0)
 
     process_line($0)
 
@@ -311,7 +313,7 @@ END {
     delete sort_key
 
     # Emit the hint table first and flush so bash can start parsing/building
-    # PICKER_PAIRS while we render and ship per-pane payloads. The \x1d
+    # the state payload while we render and ship per-pane payloads. The \x1d
     # sentinel terminates the hint table.
     printf "%s\x1d\n", hint_lookup
     fflush()
@@ -333,6 +335,7 @@ END {
         if (n_ttys >= fi) {
             printf "%s", pane_out > tty_by_idx[fi]
             close(tty_by_idx[fi])
+            feedback_by_idx[fi] = pane_out
         } else {
             printf "%d\t%s\x1e", fi - 1, pane_out
         }
@@ -340,5 +343,15 @@ END {
     # Sync sentinel: bash blocks reading this until all TTY writes have
     # flushed, ensuring the picker panes are populated before swap-pane
     # makes them visible.
-    if (n_ttys > 0) printf "\x1e"
+    if (n_ttys > 0) {
+        printf "\x1e"
+        fflush()
+
+        # After visibility, stream exact pane frames for the persistent
+        # feedback worker. US separates tty/frame, RS separates records, and
+        # GS marks the end of the initial frame set.
+        for (fi = 1; fi <= n_files; fi++)
+            printf "%s\x1f%s\x1e", tty_by_idx[fi], feedback_by_idx[fi]
+        printf "\x1d\x1e"
+    }
 }

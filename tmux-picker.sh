@@ -17,6 +17,22 @@ _bench start
 # compile, hint table init) is finished by the time bash has captured pane
 # data to feed it.
 coproc HINT { gawk -f "$CURRENT_DIR/hinter.awk"; }
+HINT_PROCESS_PID=$HINT_PID
+# Bash may unset a named coprocess and close its descriptors as soon as the
+# child exits. Stable duplicates keep fast hinter completions readable.
+exec {HINT_READ_FD}<&"${HINT[0]}"
+exec {HINT_WRITE_FD}>&"${HINT[1]}"
+exec {HINT[0]}<&-
+exec {HINT[1]}>&-
+
+feedback_buffer=''
+feedback_handed_off=0
+function _cleanup_feedback_buffer() {
+    (( feedback_handed_off )) && return
+    [[ -n $feedback_buffer ]] &&
+        tmux delete-buffer -b "$feedback_buffer" 2>/dev/null
+}
+trap _cleanup_feedback_buffer EXIT
 
 # Insertion-sort lines by (pane_top, pane_left) numerically, then strip
 # those two leading tab fields. Pane counts are tiny so O(n²) is fine.
@@ -143,22 +159,22 @@ done <<< "${setup_out#*$'\n\x1c\n'}"
 # included a swap-pane to that effect (see "Realign" comment above).
 
 # Feed gawk: tty list (one per line, blank-line terminator), then captures,
-# then close stdin to signal EOF. gawk's END block writes per-pane payloads
-# straight to the picker ptys — no bash distribution loop, no extra forks.
+# then close stdin to signal EOF. The rendered panes go directly to their
+# ttys; exact feedback frames follow the visibility sentinel on stdout.
 {
     for (( i=0; i<source_pane_count; i++ )); do
         printf '%s\n' "${picker_tty[${picker_panes[i]}]}"
     done
     printf '\n'
     printf '%s' "$cap_out"
-} >&"${HINT[1]}"
-exec {HINT[1]}>&-
+} >&"$HINT_WRITE_FD"
+exec {HINT_WRITE_FD}>&-
 
 # Read the hint table (terminated by \x1d). gawk fflushes after the table
 # so this returns ~as soon as gawk's main loop finishes — well before the
 # per-pane payloads land on the picker ttys.
 declare -A match_by_hint
-while IFS= read -r line <&"${HINT[0]}"; do
+while IFS= read -r line <&"$HINT_READ_FD"; do
     [[ ${line:0:1} == $'\x1d' ]] && break
     hint=${line%%:*}
     match=${line#*:}
@@ -167,14 +183,14 @@ done
 _bench "after read hint_table"
 
 if (( ${#match_by_hint[@]} == 0 )); then
-    exec {HINT[0]}<&-
-    wait "$HINT_PID" 2>/dev/null
+    exec {HINT_READ_FD}<&-
+    wait "$HINT_PROCESS_PID" 2>/dev/null
     tmux kill-session -t "$picker_session" 2>/dev/null
     tmux display-message "tmux-picker: no hints to pick, is gawk installed?"
     exit 1
 fi
 
-# RT3 prep: build swap_cmd and PICKER_PAIRS while gawk is still writing
+# RT3 prep: build swap_cmd and the state payload while gawk is still writing
 # per-pane payloads to the picker ttys. By the time we wait on gawk's sync
 # sentinel, the heavy shell work is done and only the swap-pane server work
 # remains on the critical path.
@@ -185,24 +201,40 @@ done
 final_cmd="${swap_cmd}"
 [[ $pane_was_zoomed == "1" ]] && final_cmd+=" \\; resize-pane -Z -t $picker_pane_id"
 
-# Hand match table + context to hint_mode via one session-scoped env var.
-printf -v _pairs 'last_pane_id=%q\ncurrent_pane_id=%q\npane_was_zoomed=%q\nswap_cmd=%q\n' \
-    "$last_pane_id" "$current_pane_id" "$pane_was_zoomed" "$swap_cmd"
+# Build the state payload consumed by hint_mode.
+feedback_buffer="$picker_session-frames"
+printf -v _pairs 'last_pane_id=%q\ncurrent_pane_id=%q\npane_was_zoomed=%q\nswap_cmd=%q\nfeedback_buffer=%q\n' \
+    "$last_pane_id" "$current_pane_id" "$pane_was_zoomed" "$swap_cmd" \
+    "$feedback_buffer"
 for hint in "${!match_by_hint[@]}"; do
     printf -v _row 'match_by_hint[%q]=%q\n' "$hint" "${match_by_hint[$hint]}"
     _pairs+=$_row
 done
 
 # Wait for gawk to finish TTY writes — its trailing \x1e marks completion.
-IFS= read -r -N 1 -d '' _sync <&"${HINT[0]}" 2>/dev/null || true
-exec {HINT[0]}<&-
-wait "$HINT_PID" 2>/dev/null
+IFS= read -r -N 1 -d '' _sync <&"$HINT_READ_FD" 2>/dev/null || true
 
 eval "tmux $final_cmd"
 _bench "after swap (HINTS VISIBLE)"
 
-# Unblock hint_mode's `tmux wait-for "$picker_session"` (it will then read
-# PICKER_PAIRS from the session env). show-env takes at most one var, so
-# we pack everything into a single PICKER_PAIRS blob.
-tmux setenv -t "$picker_session" PICKER_PAIRS "$_pairs" \
-        \; wait-for -S "$picker_session"
+# Keep the feedback frames in tmux memory. hint_mode consumes and deletes this
+# buffer before entering its key loop.
+if ! tmux load-buffer -b "$feedback_buffer" - <&"$HINT_READ_FD"; then
+    exec {HINT_READ_FD}<&-
+    wait "$HINT_PROCESS_PID" 2>/dev/null
+    tmux kill-session -t "$picker_session" 2>/dev/null
+    exit 1
+fi
+exec {HINT_READ_FD}<&-
+wait "$HINT_PROCESS_PID" 2>/dev/null
+
+# Stream state through a tmux buffer to avoid command-size limits with large
+# hint tables, then unblock hint_mode.
+if printf '%s' "$_pairs" |
+    tmux load-buffer -b "$picker_session" - \; wait-for -S "$picker_session"; then
+    feedback_handed_off=1
+else
+    tmux delete-buffer -b "$feedback_buffer" 2>/dev/null
+    tmux kill-session -t "$picker_session" 2>/dev/null
+    exit 1
+fi

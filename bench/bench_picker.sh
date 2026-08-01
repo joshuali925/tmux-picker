@@ -107,7 +107,8 @@ run_once() {
     local n_panes=${1:-1}
     : > "$LOG"
     tmux -L "$SOCKET" kill-server 2>/dev/null || true
-    tmux -L "$SOCKET" new-session -d -s bench -x 200 -y 80 'cat'
+    # Avoid loading user plugins into the fresh benchmark server.
+    tmux -f /dev/null -L "$SOCKET" new-session -d -s bench -x 200 -y 80 'cat'
     # Add additional panes (each running cat) and paste sample into each.
     # Use even-vertical layout so pane geometry is deterministic.
     local i
@@ -151,6 +152,13 @@ run_once() {
             }
         ' "$LOG" >> "$PHASES_LOG"
     fi
+    # Bench mode makes hint_mode exit after the state handoff. Wait for its
+    # auxiliary session and in-memory feedback worker to exit before killing
+    # the server.
+    for ((i=0; i<50; i++)); do
+        [[ $(tmux -L "$SOCKET" list-sessions -F '#{session_name}' 2>/dev/null | wc -l) -le 1 ]] && break
+        sleep 0.01
+    done
     tmux -L "$SOCKET" kill-server 2>/dev/null || true
     sleep 0.05
 }
